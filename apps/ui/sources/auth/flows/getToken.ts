@@ -4,13 +4,26 @@ import { encodeBase64 } from "@/encryption/base64";
 import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
-import { serverFetch } from '@/sync/http/client';
+import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { HappyError } from '@/utils/errors/errors';
 import { AuthErrorCodeSchema, readServerEnabledBit } from '@happier-dev/protocol';
 
 
-export async function authGetToken(secret: Uint8Array) {
+export async function authGetToken(secret: Uint8Array, options: Readonly<{ inviteToken?: string }> = {}) {
+    const scope = getActiveServerSnapshot();
+    const assertScope = () => {
+        const current = getActiveServerSnapshot();
+        if (current.serverId !== scope.serverId || current.serverUrl !== scope.serverUrl || current.generation !== scope.generation) {
+            throw new StaleServerGenerationError();
+        }
+    };
     const serverFeatures = await getReadyServerFeatures();
+    assertScope();
+    if (options.inviteToken !== undefined && (!options.inviteToken.trim() ||
+        !serverFeatures || readServerEnabledBit(serverFeatures, 'accounts.machineAccess') !== true)) {
+        throw new Error('Managed account invitations are not enabled on this server.');
+    }
     if (serverFeatures) {
         // Backward compatibility:
         // - New servers explicitly advertise `features.auth.login.keyChallenge.enabled`.
@@ -24,10 +37,11 @@ export async function authGetToken(secret: Uint8Array) {
 
     const { challenge, signature, publicKey } = authChallenge(secret);
 
-    const body: any = {
+    const body: Record<string, string> = {
         challenge: encodeBase64(challenge),
         signature: encodeBase64(signature),
         publicKey: encodeBase64(publicKey),
+        ...(options.inviteToken !== undefined ? { inviteToken: options.inviteToken.trim() } : {}),
     };
 
     // Backward compatibility: only send new key fields when the server advertises support.
@@ -46,6 +60,7 @@ export async function authGetToken(secret: Uint8Array) {
         body.contentPublicKeySig = encodeBase64(contentPublicKeySig);
     }
 
+    assertScope();
     const response = await serverFetch('/v1/auth', {
         method: 'POST',
         headers: {
@@ -73,5 +88,6 @@ export async function authGetToken(secret: Uint8Array) {
         );
     }
     const data = await response.json() as { token: string };
+    assertScope();
     return data.token;
 }

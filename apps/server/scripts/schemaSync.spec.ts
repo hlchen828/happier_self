@@ -1,9 +1,14 @@
+import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
 describe("schemaSync", () => {
-    it("generates provider-specific schemas from prisma/schema.prisma", () => {
+    it("generates provider-specific schemas with MySQL-valid invitation defaults", async () => {
         const master = `
 generator client {
     provider        = "prisma-client-js"
@@ -15,14 +20,37 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
-model Account { id String @id }
+model Account {
+    id String @id
+}
+model ManagedAccountInvite {
+    id String @id
+    machineIds String @default("[]")
+}
 `;
 
         const sqlite = generateSqliteSchemaFromPostgres(master);
         expect(sqlite).toContain('provider = "sqlite"');
+        expect(sqlite).toContain('machineIds String @default("[]")');
 
         const mysql = generateMySqlSchemaFromPostgres(master);
         expect(mysql).toContain('provider = "mysql"');
+        expect(mysql).toContain('machineIds String @db.LongText');
+        const directory = await mkdtemp(join(tmpdir(), "happier-mysql-schema-default-"));
+        try {
+            const schemaPath = join(directory, "schema.prisma");
+            await writeFile(schemaPath, mysql);
+            // Exercise Prisma's real SQL renderer: a literal TEXT default parses but is invalid MySQL DDL.
+            const prismaCliPath = createRequire(import.meta.url).resolve("prisma/build/index.js");
+            const result = spawnSync(process.execPath, [prismaCliPath, "migrate", "diff", "--from-empty", "--to-schema-datamodel", schemaPath, "--script"], {
+                env: { ...process.env, DATABASE_URL: "mysql://test:test@127.0.0.1:3306/test" }, encoding: "utf8",
+            });
+            expect(result.error).toBeUndefined();
+            expect(result.status, result.stderr).toBe(0);
+            expect(result.stdout).toMatch(/`machineIds` LONGTEXT NOT NULL DEFAULT \('\[\]'\)/);
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
     });
 
     it("includes release binaryTargets in sqlite/mysql generator blocks (cross-compiled server binaries)", () => {

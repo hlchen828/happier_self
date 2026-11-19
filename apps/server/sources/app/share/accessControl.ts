@@ -1,5 +1,18 @@
 import { db } from "@/storage/db";
+import type { Prisma } from '@prisma/client';
+import type { Tx } from '@/storage/inTx';
 import { ShareAccessLevel } from "@/storage/prisma";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
+import { managedSessionAccess } from '@/app/account/managedAccounts/access';
+
+/** Indexed recipient membership used by access projections, list reads and realtime fanout. */
+export function createSessionSharedWithUserWhere(userId: string): Prisma.SessionShareWhereInput {
+    return { sharedWithUserId: userId, ...(configuredAdministratorPublicKey() ? {
+        encryptedDataKey: { not: null },
+        session: { machine: { managedIdentityAccountId: { not: null }, revokedAt: null, replacedByMachineId: null,
+            grants: { some: { accountId: userId, dataEncryptionKey: { not: null } } } } },
+    } : {}) };
+}
 
 /**
  * Access level for session sharing (including owner)
@@ -33,10 +46,12 @@ export interface SessionAccess {
  */
 export async function checkSessionAccess(
     userId: string,
-    sessionId: string
+    sessionId: string,
+    client: Tx = db,
 ): Promise<SessionAccess | null> {
+    if (configuredAdministratorPublicKey() && !await managedSessionAccess(userId, sessionId, client)) return null;
     // First check if user owns the session
-    const session = await db.session.findUnique({
+    const session = await client.session.findUnique({
         where: { id: sessionId },
         select: {
             accountId: true,
@@ -61,17 +76,17 @@ export async function checkSessionAccess(
     }
 
     // Check if session is shared with user
-    const share = await db.sessionShare.findUnique({
+    const share = await client.sessionShare.findUnique({
         where: {
             sessionId_sharedWithUserId: {
                 sessionId,
                 sharedWithUserId: userId
             }
         },
-        select: { accessLevel: true }
+        select: { accessLevel: true, encryptedDataKey: true }
     });
 
-    if (share) {
+    if (share && (!configuredAdministratorPublicKey() || share.encryptedDataKey)) {
         return {
             userId,
             sessionId,
@@ -144,6 +159,7 @@ export async function canManageSharing(
     userId: string,
     sessionId: string
 ): Promise<boolean> {
+    if (configuredAdministratorPublicKey()) return false;
     const access = await checkSessionAccess(userId, sessionId);
     if (!access) return false;
     return requireAccessLevel(access, 'admin');
@@ -191,6 +207,7 @@ export async function canManagePermissionDelegation(
     userId: string,
     sessionId: string,
 ): Promise<boolean> {
+    if (configuredAdministratorPublicKey()) return false;
     const access = await checkSessionAccess(userId, sessionId);
     if (!access) return false;
     if (access.isOwner) return true;

@@ -14,6 +14,7 @@ import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumu
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { notifyManagedAccessChanged } from '@/sync/runtime/managedAccessChanged';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
@@ -1185,6 +1186,7 @@ export async function handleSocketUpdate(params: {
     onReadyProjectionAdvance?: (sessionId: string, seq: number) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    onManagedAccessRevoked?: () => Promise<void>;
     invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
@@ -1222,6 +1224,7 @@ export async function handleSocketUpdate(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        onManagedAccessRevoked,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1265,6 +1268,7 @@ export async function handleSocketUpdate(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        onManagedAccessRevoked,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1335,6 +1339,7 @@ export async function handleUpdateContainer(params: {
     onReadyProjectionAdvance?: (sessionId: string, seq: number) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    onManagedAccessRevoked?: () => Promise<void>;
     invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
@@ -1372,6 +1377,7 @@ export async function handleUpdateContainer(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        onManagedAccessRevoked,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1409,6 +1415,18 @@ export async function handleUpdateContainer(params: {
             : undefined;
         return mode !== 'e2ee';
     };
+
+    if (updateData.body.t === 'managed-access-changed') {
+        if (updateData.body.revoked && onManagedAccessRevoked) {
+            await onManagedAccessRevoked();
+            if (sourceServerId) notifyManagedAccessChanged(sourceServerId);
+            return;
+        }
+        if (sourceServerId) notifyManagedAccessChanged(sourceServerId);
+        invalidateMachines();
+        invalidateSessions();
+        return;
+    }
 
     if (updateData.body.t === 'new-message') {
         if (isPlainSessionBlockedByClientRequirement(updateData.body.sid)) return;
@@ -1982,8 +2000,11 @@ export async function handleUpdateContainer(params: {
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
         // even if machine-activity ephemerals arrive before a full machines refresh.
+        const existingMachine = storage.getState().machines[machineId];
         storage.getState().applyMachines([{
             id: machineId,
+            managed: existingMachine?.managed,
+            managedAccessStatus: existingMachine?.managedAccessStatus,
             seq: machineUpdate.seq,
             createdAt: machineUpdate.createdAt,
             updatedAt: machineUpdate.updatedAt,

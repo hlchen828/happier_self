@@ -16,6 +16,7 @@ import {
 
 const AUTH_KEY = 'auth_credentials';
 const PENDING_EXTERNAL_AUTH_KEY = 'pending_external_auth';
+const PENDING_MANAGED_ENROLLMENT_KEY = 'pending_managed_enrollment';
 const PENDING_EXTERNAL_AUTH_GLOBAL_KEY = 'pending_external_auth__global';
 const PENDING_EXTERNAL_CONNECT_KEY = 'pending_external_connect';
 const PENDING_EXTERNAL_CONNECT_GLOBAL_KEY = 'pending_external_connect__global';
@@ -702,6 +703,19 @@ function listWebScopedCredentialKeysForCleanup(): string[] {
 }
 
 export const TokenStorage = {
+    async getPreparedManagedEnrollment(serverUrl: string, inviteHash: string, options: ServerCredentialLookupOptions = {}): Promise<{ secret: string } | null> {
+        const key = (await getServerScopedKeys(`${PENDING_MANAGED_ENROLLMENT_KEY}_${inviteHash}`, serverUrl, options)).primary;
+        return await readStoredJson(key, 'prepared managed enrollment', (value): value is { secret: string } =>
+            value !== null && typeof value === 'object' && 'secret' in value && typeof value.secret === 'string');
+    },
+    async setPreparedManagedEnrollment(serverUrl: string, inviteHash: string, value: { secret: string }, options: ServerCredentialLookupOptions = {}): Promise<boolean> {
+        const key = (await getServerScopedKeys(`${PENDING_MANAGED_ENROLLMENT_KEY}_${inviteHash}`, serverUrl, options)).primary;
+        return await writeStoredJson(key, 'prepared managed enrollment', value);
+    },
+    async clearPreparedManagedEnrollment(serverUrl: string, inviteHash: string, options: ServerCredentialLookupOptions = {}): Promise<boolean> {
+        const key = (await getServerScopedKeys(`${PENDING_MANAGED_ENROLLMENT_KEY}_${inviteHash}`, serverUrl, options)).primary;
+        return await removeStoredValue(key, 'prepared managed enrollment');
+    },
     async getAuthAutoRedirectSuppressedUntil(): Promise<number> {
         const key = await getAuthAutoRedirectSuppressedUntilKey();
         const globalKey = getAuthAutoRedirectSuppressedUntilGlobalKey();

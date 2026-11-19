@@ -60,6 +60,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
 
     return {
         features: {
+            accounts: { machineAccess: { enabled: false }, inviteMachineAssignment: { enabled: false } },
             bugReports: { enabled: true },
             e2ee: {
                 keylessAccounts: { enabled: false },

@@ -388,6 +388,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 name="restore/show-qr"
                 options={UNAUTH_SHELL_STACK_SCREEN_OPTIONS}
             />
+            <Stack.Screen name="join" options={UNAUTH_SHELL_STACK_SCREEN_OPTIONS} />
             <Stack.Screen
                 name="restore/manual"
                 options={mixedUseRouteScreenOptions.restoreManual}

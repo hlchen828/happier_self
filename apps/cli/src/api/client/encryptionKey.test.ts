@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
 import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './encryptionKey';
 
@@ -8,6 +10,26 @@ describe('token-only encryption context', () => {
       .toThrowError(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
     expect(() => resolveMachineEncryptionContext({ token: 'plain', encryption: null }))
       .toThrowError(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
+  });
+});
+
+describe('managed machine encryption context', () => {
+  it('shares a resource key without disclosing the machine identity private key', () => {
+    const identity = tweetnacl.box.keyPair();
+    const credentials = {
+      token: 'machine-token',
+      encryption: { type: 'dataKey' as const, publicKey: identity.publicKey, machineKey: identity.secretKey },
+    };
+    const first = resolveMachineEncryptionContext(credentials, { independentResourceKey: true });
+    const second = resolveMachineEncryptionContext(credentials, { independentResourceKey: true });
+
+    expect(first.encryptionVariant).toBe('dataKey');
+    expect(first.encryptionKey).not.toEqual(identity.secretKey);
+    expect(first.encryptionKey).not.toEqual(second.encryptionKey);
+    expect(openEncryptedDataKeyEnvelopeV1({
+      envelope: first.dataEncryptionKey!,
+      recipientSecretKeyOrSeed: identity.secretKey,
+    })).toEqual(first.encryptionKey);
   });
 });
 

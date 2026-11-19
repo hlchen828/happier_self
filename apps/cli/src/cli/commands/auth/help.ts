@@ -5,6 +5,7 @@ export function showAuthHelp(): void {
 ${chalk.bold('happier auth')} - Authentication management
 
 ${chalk.bold('Usage:')}
+  happier auth enroll --invite <token> [--server <name-or-id> | --server-url <url>]    Enroll an independent machine identity on a managed relay
   happier auth login [--no-open] [--force] [--method web|mobile] [--wait-timeout <seconds>] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
   happier auth request --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                                    Create a claim-gated auth request (headless-friendly)
   happier auth approve --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]              Approve an auth request using your local credentials

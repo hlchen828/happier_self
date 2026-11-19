@@ -18,8 +18,16 @@ function isEditableElementFocused(): boolean {
     return tagName === 'input' || tagName === 'textarea' || activeElement.getAttribute('contenteditable') === 'true';
 }
 
+function hasCoarsePointer(): boolean {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia?.('(any-pointer: coarse)')?.matches === true;
+}
+
 function isMobileLikeHost(width: number): boolean {
-    return width < 768;
+    // A touchscreen with a wide viewport — an unfolded foldable, a tablet in desktop
+    // mode, an iPad — still raises a software keyboard. Width alone (< 768) would
+    // label it a desktop host and the composer would never lift above the keyboard.
+    return width < 768 || hasCoarsePointer();
 }
 
 function readVisualViewportKeyboardInset(): number {

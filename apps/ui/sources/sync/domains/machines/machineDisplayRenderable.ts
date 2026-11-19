@@ -7,6 +7,8 @@ export interface MachineDisplayMetadata {
 }
 
 export interface MachineDisplayRenderable {
+    managed?: boolean;
+    managedAccessStatus?: Machine['managedAccessStatus'];
     id: string;
     updatedAt: number;
     active: boolean;
@@ -33,6 +35,8 @@ export function buildMachineDisplayMetadata(metadata: MachineMetadata | null | u
 export function buildMachineDisplayRenderableFromMachine(machine: Machine): MachineDisplayRenderable {
     return {
         id: machine.id,
+        managed: machine.managed,
+        managedAccessStatus: machine.managedAccessStatus,
         updatedAt: machine.updatedAt,
         active: machine.active,
         activeAt: machine.activeAt,

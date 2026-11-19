@@ -203,6 +203,7 @@ import { createSyncGenerationGuard } from './domains/scope/syncGenerationGuard';
 import { SessionMessagePageDecryptionError } from './engine/sessions/sessionMessagesPagePipeline';
 import {
     clearWarmCacheAccountScope,
+    clearWarmCachesForScope,
     loadMachineDisplayWarmCacheEntries,
     loadSessionListWarmCacheEntries,
     loadSessionOrganizationWarmCacheSnapshot,
@@ -2276,11 +2277,24 @@ class Sync {
         this.revenueCatInitialized = false;
     };
 
-    public async switchServer(credentials: AuthCredentials): Promise<void> {
+    public async switchServer(credentials: AuthCredentials, options?: Readonly<{ retireManagedAccess: true }>): Promise<void> {
+        const scope = getActiveServerSnapshot();
+        if (options?.retireManagedAccess) {
+            // A paged session list cannot prove which cached sessions were revoked. Withdraw
+            // this Home's resource cache immediately; permitted resources rehydrate normally.
+            const machineIds = new Set([...Object.keys(storage.getState().machines), ...this.machineDataKeys.keys()]);
+            const oldEncryption = this.encryption;
+            for (const sessionId of Object.keys(storage.getState().sessions)) this.retireLocalSession(sessionId, scope.serverId);
+            clearWarmCachesForScope(scope.serverId, parseToken(credentials.token));
+            this.resetServerScopedRuntimeState();
+            await oldEncryption.initializeMachines(new Map(), { unavailableMachineIds: machineIds });
+        }
+        const generation = this.serverScopeGeneration;
         const encryption = await createEncryptionFromAuthCredentials(credentials);
-
-        this.resetServerScopedRuntimeState();
-        apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
+        const current = getActiveServerSnapshot();
+        if (this.serverScopeGeneration !== generation || current.serverId !== scope.serverId || current.serverUrl !== scope.serverUrl || current.generation !== scope.generation) return;
+        if (!options?.retireManagedAccess) this.resetServerScopedRuntimeState();
+        apiSocket.initialize({ endpoint: scope.serverUrl, token: credentials.token }, encryption);
         await this.restore(credentials, encryption);
     }
 
@@ -8246,6 +8260,7 @@ class Sync {
               onReadyProjectionAdvance: (sessionId, seq) => this.notifyReadyProjectionAdvance(sessionId, seq),
               assumeUsers: (userIds) => this.assumeUsers(userIds),
               applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+              onManagedAccessRevoked: () => this.switchServer(this.credentials, { retireManagedAccess: true }),
               invalidateMachines: () => this.machinesSync.invalidate(),
               invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),

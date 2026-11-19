@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Machine } from '@/sync/domains/state/storageTypes'
 
 import { buildUpdatedMachineFromSocketUpdate } from './syncMachines'
+import { Encryption } from '@/sync/encryption/encryption'
 
 type MachineUpdate = {
     machineId: string
@@ -41,6 +42,16 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
 }
 
 describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
+    it('preserves published managed identity and grant status across unrelated socket row updates', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['m1', null]]));
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: 'm1', active: false }, updateSeq: 2, updateCreatedAt: 10,
+            existingMachine: buildMachine({ managed: true, managedAccessStatus: 'ready' }),
+            getMachineEncryption: (id) => encryption.getMachineEncryption(id),
+        });
+        expect(updated).toMatchObject({ managed: true, managedAccessStatus: 'ready', active: false });
+    });
     it('ignores stale metadata updates and still applies newer daemonState updates', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))

@@ -22,6 +22,10 @@ import { mapStoredSessionRuntimeActivityProjection } from "./v2SessionListRows";
 import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 import { type Fastify } from "../../types";
+import * as privacyKit from 'privacy-kit';
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
+import { managedAccountAccess, managedMachineAccess, ManagedAccessError } from '@/app/account/managedAccounts/access';
+import { emitManagedAccessChanged, decodeDataKeyEnvelope } from '@/app/account/managedAccounts/grants';
 
 type ExistingSessionLoadUpdate = Readonly<{
     sessionId: string;
@@ -35,6 +39,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         schema: {
             body: z.object({
                 tag: z.string(),
+                machineId: z.string().optional(),
                 metadata: z.string(),
                 agentState: z.string().nullish(),
                 dataEncryptionKey: z.string().nullish(),
@@ -58,7 +63,18 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             });
         }
 
+        const managed = configuredAdministratorPublicKey() !== null;
         const resolved = await inTx(async (tx) => {
+            const machineId = request.body.machineId;
+            if (managed) {
+                const actor = await managedAccountAccess(userId, tx);
+                const access = machineId ? await managedMachineAccess(userId, machineId, tx) : null;
+                if (actor.role !== 'machine' || !access?.isOwner || access.machine.managedIdentityAccountId !== userId) {
+                    throw new ManagedAccessError(403, 'session-machine-mismatch');
+                }
+                if (requestedEncryptionMode === 'plain' || !dataEncryptionKey) throw new ManagedAccessError(400, 'managed-e2ee-required');
+                decodeDataKeyEnvelope(dataEncryptionKey);
+            }
             const existing = await tx.session.findFirst({
                 where: {
                     accountId: userId,
@@ -67,6 +83,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             });
 
             if (existing) {
+                if (managed && existing.machineId !== machineId) throw new ManagedAccessError(403, 'session-machine-mismatch');
                 log(
                     { module: "session-create", sessionId: existing.id, userId, tag },
                     `Found existing session: ${existing.id} for tag ${tag}`,
@@ -157,6 +174,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             const created = await tx.session.create({
                 data: {
                     accountId: userId,
+                    ...(managed ? { machineId } : {}),
                     tag,
                     encryptionMode: effectiveEncryptionMode,
                     metadata,
@@ -167,7 +185,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         effectiveEncryptionMode === "plain"
                             ? undefined
                             : dataEncryptionKey
-                                ? new Uint8Array(Buffer.from(dataEncryptionKey, "base64"))
+                                ? new Uint8Array(privacyKit.decodeBase64(dataEncryptionKey))
                                 : undefined,
                 },
             });
@@ -175,6 +193,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             const cursor = await markAccountChanged(tx, { accountId: userId, kind: "session", entityId: created.id });
 
             afterTx(tx, () => {
+                if (managed && created.machineId) emitManagedAccessChanged({ accountId: userId, cursor, machineId: created.machineId, sessionId: created.id, recipientFilter: { type: 'machine-only', machineId: created.machineId } });
                 const runtimeActivityProjection = mapStoredSessionRuntimeActivityProjection(created);
                 const updatePayload = buildNewSessionUpdate({
                     id: created.id,

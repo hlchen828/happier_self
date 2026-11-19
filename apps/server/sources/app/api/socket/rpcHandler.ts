@@ -422,6 +422,15 @@ export function rpcHandler(
             }
 
             let { targetUserId, targetSocket } = targetResolution;
+            const requireCurrentCallerAccess = async () => {
+                if (!socket.connected) throw new Error('Forbidden');
+                const current = await resolveRpcCallTarget({ callerUserId: userId, method, allRpcListeners });
+                if (!socket.connected || current.type === 'forbidden' || current.targetUserId !== targetUserId) throw new Error('Forbidden');
+                if (rpcAuthorization) {
+                    const access = await checkSessionAccess(userId, rpcAuthorization.sessionId);
+                    if (!access || !requireAccessLevel(access, 'edit')) throw new Error('Forbidden');
+                }
+            };
             const explicitMachineStopRequest = readExplicitMachineStopRequest(method, rpcAuthorization);
             if (method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) && !explicitMachineStopRequest) {
                 callback?.({
@@ -616,10 +625,13 @@ export function rpcHandler(
                             io: ctx.io,
                             cancellation,
                             targetSocketId: fallbackSocket.id,
-                            submit: async () => await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(
-                                SOCKET_RPC_EVENTS.REQUEST,
-                                buildForwardedRequest(),
-                            ),
+                            submit: async () => {
+                                await requireCurrentCallerAccess();
+                                return await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(
+                                    SOCKET_RPC_EVENTS.REQUEST,
+                                    buildForwardedRequest(),
+                                );
+                            },
                         });
                         // Evaluated before the optional call: `callback?.(await ...)` would
                         // short-circuit its argument and skip the stop lifecycle entirely
@@ -698,10 +710,10 @@ export function rpcHandler(
                         io: ctx.io,
                         cancellation,
                         targetSocketId,
-                        submit: async () => await ctx.io.timeout(forwardTimeoutMs).to(targetSocketId).emitWithAck(
-                            SOCKET_RPC_EVENTS.REQUEST,
-                            buildForwardedRequest(),
-                        ),
+                        submit: async () => {
+                            await requireCurrentCallerAccess();
+                            return await ctx.io.timeout(forwardTimeoutMs).to(targetSocketId).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, buildForwardedRequest());
+                        },
                     });
                     if (Array.isArray(responses) && responses.length === 0) {
                         // The socket mapping exists in Redis, but no socket acknowledged the call.
@@ -790,10 +802,10 @@ export function rpcHandler(
                     io: ctx.io,
                     cancellation,
                     targetSocketId: activeTargetSocket.id,
-                    submit: async () => await activeTargetSocket.timeout(forwardTimeoutMs).emitWithAck(
-                        SOCKET_RPC_EVENTS.REQUEST,
-                        buildForwardedRequest(),
-                    ),
+                    submit: async () => {
+                        await requireCurrentCallerAccess();
+                        return await activeTargetSocket.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, buildForwardedRequest());
+                    },
                 });
 
                 const forwardedResponse = await forwardTargetResponse(response);

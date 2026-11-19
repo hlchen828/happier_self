@@ -41,6 +41,20 @@ graph TB
 - Use explicit, stable binary layouts so clients can interoperate across versions.
 - Prefer simple, consistent base64 encoding on the wire.
 
+## Managed machine access (development)
+
+The local managed-account implementation is enabled by `HAPPIER_ADMIN_PUBLIC_KEY` and advertised as `accounts.machineAccess`. Its independent administrator, member and machine identities use the existing signing/content-key binding. Machine enrollment must not copy administrator credentials: full terminal access would expose them to members.
+
+A managed machine's resource DEK is random and independent of its identity's private content key. Sessions also use independent random DEKs. The machine opens its own published envelopes, verifies each recipient's signed content public key, and seals a separate versioned DEK envelope for the administrator and every enabled, assigned member. The relay persists ciphertext and recipient envelopes, not account private keys or content plaintext.
+
+Member invitations may store a preselected set of managed machine IDs when `accounts.inviteMachineAssignment` is enabled. The invitation owner validates the full set at creation and redemption; account enrollment, single-use consumption and grants commit together. The grant owner emits the same post-commit access changes as manual assignment, so the existing machine key holder performs recipient reconciliation. Invitations contain no resource DEKs or account private keys, and preassigned access remains pending until recipient envelopes arrive.
+
+Session creation supplies a top-level `machineId`; the server validates it against the authenticated machine identity before persisting the relationship. Metadata inside ciphertext is not an authorization witness. Key publication is incremental and rechecks grants transactionally. Historical key delivery uses the paginated session owner, while new-session hints carry a `sessionId` for targeted delivery. Access changes and reconnects trigger reconciliation; an offline holder or failed delivery leaves the resource pending rather than usable without a key.
+
+Revocation controls subsequent Happier reads, key retrieval, Socket delivery and interactions, not the recipient's operating-system access. Already copied plaintext, old keys and programs installed through full terminal access cannot be recalled, and running jobs are not automatically terminated. Shared-machine users must trust each other. The schema migration does not infer machine relationships for old encrypted session metadata or convert existing account credentials into safe machine identities.
+
+See the [operator onboarding instructions](../apps/docs/content/docs/self-hosting/auth.mdx#administrator-managed-machines-development-source). This contract has not been verified in a published release.
+
 ## Encryption variants
 
 ```mermaid

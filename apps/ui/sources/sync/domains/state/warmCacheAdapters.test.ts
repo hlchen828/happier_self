@@ -2,17 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import {
     buildMachineDisplayCacheEntryFromRenderable,
+    buildMachineDisplayRenderableFromCacheEntry,
     buildSessionListRenderableFromCacheEntry,
     buildPersistedSessionListCacheEntriesFromRenderables,
     buildSessionListCacheEntryFromRenderable,
     SESSION_LIST_WARM_CACHE_MAX_ENTRIES,
 } from './warmCacheAdapters';
-import { SessionListCacheEntryV1Schema } from './warmCachePersistence';
+import { MachineDisplayCacheEntryV1Schema, SessionListCacheEntryV1Schema } from './warmCachePersistence';
+import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
 import { buildSessionListRenderableFromSession, resolveSessionListRenderableAttentionPromotionPlacement } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { createSessionFixture } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
 
 describe('warmCacheAdapters', () => {
+    it('retains managed identity and pending access through cache hydration without reviving cached private metadata', () => {
+        const ready = buildMachineDisplayRenderableFromMachine(createMachineFixture({ id: 'managed', managed: true, managedAccessStatus: 'ready' }));
+        const previous = buildMachineDisplayCacheEntryFromRenderable(ready);
+        const pending = { ...ready, metadata: null, managedAccessStatus: 'pending' as const };
+        const entry = buildMachineDisplayCacheEntryFromRenderable(pending, previous);
+        const persisted = MachineDisplayCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+        const restored = buildMachineDisplayRenderableFromCacheEntry(persisted);
+        expect(restored).toMatchObject({ managed: true, managedAccessStatus: 'pending', metadata: null });
+        expect(buildMachineDisplayCacheEntryFromRenderable(restored, persisted)).toBe(persisted);
+        const delivered = buildMachineDisplayCacheEntryFromRenderable(ready, persisted);
+        expect(buildMachineDisplayRenderableFromCacheEntry(delivered)).toMatchObject({ managed: true, managedAccessStatus: 'ready', metadata: ready.metadata });
+    });
+    it('preserves absent versus explicitly false enrollment through JSON cache hydration', () => {
+        for (const managed of [undefined, false]) {
+            const display = buildMachineDisplayRenderableFromMachine(createMachineFixture({ id: 'predecessor', managed }));
+            const entry = buildMachineDisplayCacheEntryFromRenderable(display);
+            const persisted = MachineDisplayCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+            expect(buildMachineDisplayRenderableFromCacheEntry(persisted).managed).toBe(managed);
+        }
+    });
+
     it('persists resolved runtime identity through compact projection and JSON cache hydration', () => {
         const renderable = buildSessionListRenderableFromSession(createSessionFixture({
             metadata: {

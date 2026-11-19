@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import {
   AccountEncryptionModeResponseSchema,
+  readServerEnabledBit,
 } from '@happier-dev/protocol';
 
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -11,11 +12,13 @@ export type DesiredSessionCreateEncryptionModeResult = Readonly<{
   desiredSessionEncryptionMode: 'e2ee' | 'plain';
   serverSupportsFeatureSnapshot: boolean;
   storagePolicy: 'required_e2ee' | 'optional' | 'plaintext_only';
+  managedMachineId?: string;
 }>;
 
 export async function resolveSessionCreateEncryptionMode(params: Readonly<{
   token: string;
   serverBaseUrl: string;
+  machineId?: unknown;
   featuresTimeoutMs?: number;
   accountTimeoutMs?: number;
 }>): Promise<DesiredSessionCreateEncryptionModeResult> {
@@ -37,6 +40,13 @@ export async function resolveSessionCreateEncryptionMode(params: Readonly<{
     featuresSnapshot.status === 'ready'
       ? featuresSnapshot.features.capabilities.encryption.storagePolicy
       : 'required_e2ee';
+
+  if (featuresSnapshot.status === 'ready' && readServerEnabledBit(featuresSnapshot.features, 'accounts.machineAccess') === true) {
+    const managedMachineId = typeof params.machineId === 'string' ? params.machineId.trim() : '';
+    if (!managedMachineId) throw new Error('Managed session creation requires the enrolled machine id.');
+    if (storagePolicy === 'plaintext_only') throw new Error('Managed machines require an E2EE-capable relay.');
+    return { desiredSessionEncryptionMode: 'e2ee', serverSupportsFeatureSnapshot, storagePolicy, managedMachineId };
+  }
 
   if (storagePolicy === 'plaintext_only') {
     assertSessionEncryptionModeAllowedByEffectiveClientRequirement('plain');

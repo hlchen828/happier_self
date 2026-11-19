@@ -1102,22 +1102,27 @@ export function useLocalSettings(): LocalSettings {
   return getStorage()(useShallow((state) => state.localSettings));
 }
 
-export function useAllMachines(): Machine[] {
-  return getStorage()(
-    useShallow((state) => {
-      const machines = resolveVisibleMachinesForActiveServerFromState(
-        state.isDataReady
-          ? state
-          : {
-              ...state,
-              machineListByServerId: {},
-            }
-      );
-      if (machines.length > 0) {
-        return machines;
-      }
-      return state.isDataReady ? machines : [];
-    })
+export function useAllMachines(enabled: boolean = true, options?: Readonly<{ includeRetiredIds?: readonly string[] }>): Machine[] {
+  const includeRetiredIds = options?.includeRetiredIds;
+  const store = getStorage();
+  const held = React.useRef<Machine[]>([]);
+  const getSnapshot = React.useCallback(() => {
+    if (!enabled) return held.current;
+    const state = store.getState();
+    const machines = resolveVisibleMachinesForActiveServerFromState(
+      state.isDataReady ? state : { ...state, machineListByServerId: {} },
+      { includeRetiredIds },
+    );
+    // Keep the external-store snapshot stable, including across presentation changes.
+    if (machines.length !== held.current.length || machines.some((machine, index) => machine !== held.current[index])) {
+      held.current = machines;
+    }
+    return held.current;
+  }, [enabled, includeRetiredIds, store]);
+  return React.useSyncExternalStore(
+    enabled ? store.subscribe : subscribeToNoMachineUpdates,
+    getSnapshot,
+    getSnapshot,
   );
 }
 

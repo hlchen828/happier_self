@@ -206,6 +206,45 @@ describe('AuthContext Account change on one Home', () => {
         }
     });
 
+    it('binds exposed credentials to their originating server rather than a newly selected Home', async () => {
+        installServer({ 'account-a': organization(50, 'a-private-folder') });
+        const app = await bootApp();
+        const { getCurrentAuth } = await import('./AuthContext');
+        const { getActiveServerSnapshot, upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        try {
+            await app.signIn('account-a');
+            expect(getCurrentAuth()?.credentialsScope?.serverId).toBe(app.homeId);
+            const origin = getCurrentAuth()?.credentialsScope;
+            await act(async () => { upsertAndActivateServer({ serverUrl: HOME_TWO_URL, scope: 'device' }); });
+            if (getCurrentAuth()?.credentials) {
+                expect(getCurrentAuth()?.credentialsScope).toBe(origin);
+                expect(getCurrentAuth()?.credentialsScope?.serverId).not.toBe(getActiveServerSnapshot().serverId);
+            }
+        } finally { await app.signOut(); await app.unmount(); }
+    });
+
+    it('withdraws cached sessions and machines immediately on a real managed revocation event', async () => {
+        let holding = false;
+        installServer({ 'account-a': organization(50, 'a-private-folder') },
+            ({ pathname }) => holding && (pathname.startsWith('/v2/sessions') || pathname === '/v1/machines') ? new Promise<void>(() => {}) : null);
+        const app = await bootApp();
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { createMachineFixture } = await import('@/dev/testkit');
+        try {
+            await app.signIn('account-a');
+            await settle();
+            app.storage.getState().applySessions([createSessionFixture({ id: 'revoked-session' })]);
+            app.storage.getState().applyMachines([createMachineFixture({ id: 'revoked-machine' })]);
+            holding = true;
+            const handler = vi.mocked(apiSocket.onMessage).mock.calls.filter(([event]) => event === 'update').at(-1)?.[1];
+            expect(handler).toBeTypeOf('function');
+            await act(async () => { await handler?.({ id: 'revoke', seq: 100, createdAt: 100,
+                body: { t: 'managed-access-changed', machineId: 'revoked-machine', revoked: true } }); });
+            expect(app.storage.getState().sessions['revoked-session']).toBeUndefined();
+            expect(app.storage.getState().machines['revoked-machine']).toBeUndefined();
+        } finally { await app.signOut(); await app.unmount(); }
+    });
+
     it('withdraws A from the store on sign out, before anyone else signs in', async () => {
         installServer({ 'account-a': organization(50, 'a-private-folder') });
         const app = await bootApp();

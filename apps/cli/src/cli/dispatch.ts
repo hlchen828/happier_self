@@ -44,7 +44,8 @@ export async function dispatchCli(params: Readonly<{
 
   // If --version is passed - do not log, its likely daemon inquiring about our version
   if (!args.includes('--version')) {
-    logger.debug('Starting happy CLI with args: ', rawArgv);
+    // Arguments can contain invitation tokens, recovery material, or user content.
+    logger.debug('Starting happy CLI');
   }
 
   try {

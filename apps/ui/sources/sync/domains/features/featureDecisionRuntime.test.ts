@@ -65,6 +65,28 @@ function countFeaturesFetchCalls(fetchMock: { mock: { calls: Array<readonly unkn
 }
 
 describe('featureDecisionRuntime', () => {
+    it('requires the explicit invite-assignment bit and its canonical machine-access dependency', async () => {
+        const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        for (const [machineAccess, assignment] of [[true, true], [true, false], [true, undefined], [false, true]] as const) {
+            const features = FeaturesResponseSchema.parse({ features: { accounts: { machineAccess: { enabled: machineAccess },
+                ...(assignment === undefined ? {} : { inviteMachineAssignment: { enabled: assignment } }),
+            } }, capabilities: {} });
+            const decision = resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'accounts.inviteMachineAssignment', settings: settingsDefaults,
+                snapshot: { status: 'ready', features }, scope: { scopeKind: 'runtime' } });
+            expect(decision?.state === 'enabled').toBe(machineAccess && assignment === true);
+        }
+    });
+    it('enables managed accounts only when the canonical server bit is explicitly true', async () => {
+        const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        for (const enabled of [true, false, undefined]) {
+            const features = FeaturesResponseSchema.parse({ features: enabled === undefined ? {} : { accounts: { machineAccess: { enabled } } }, capabilities: {} });
+            const decision = resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'accounts.machineAccess', settings: settingsDefaults,
+                snapshot: { status: 'ready', features }, scope: { scopeKind: 'runtime' } });
+            expect(decision?.state === 'enabled').toBe(enabled === true);
+        }
+    });
 	    it('ignores non-public build policy env vars in UI bundles', async () => {
 	        vi.resetModules();
 

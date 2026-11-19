@@ -41,6 +41,7 @@ import {
     type RemoteSignupOptions,
 } from "@/components/account/auth/useRemoteAuthEntryOptions";
 import { DesktopLocalSetupPanel } from "@/setup/DesktopLocalSetupPanel";
+import { ManagedInviteEntry } from '@/components/account/auth/InviteEnrollmentForm';
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -457,6 +458,7 @@ function NotAuthenticated() {
         >
             <View style={styles.welcomeBody}>
                 {renderDecisionPanel()}
+                <ManagedInviteEntry />
             </View>
         </UnauthenticatedSplitShell>
     )

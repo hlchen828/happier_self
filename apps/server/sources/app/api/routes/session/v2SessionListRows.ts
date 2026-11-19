@@ -1,4 +1,6 @@
 import type { Prisma } from "@prisma/client";
+import { createSessionSharedWithUserWhere } from '@/app/share/accessControl';
+export { createSessionSharedWithUserWhere } from '@/app/share/accessControl';
 import {
     PrimaryTurnStatusV1Schema,
     PENDING_DELIVERY_BLOCKED_REASONS,
@@ -190,9 +192,6 @@ function createV2SessionDetailPendingNoEffectCountSelect(sessionId: string) {
  * id resolution in `v2SessionListPage.ts`. They are the same predicate reached from the two
  * different sides, so they must never be spelled out twice.
  */
-export function createSessionSharedWithUserWhere(userId: string): Prisma.SessionShareWhereInput {
-    return { sharedWithUserId: userId };
-}
 
 /**
  * The session-list visibility predicate, as one disjunction.
@@ -225,7 +224,7 @@ export function createV2SessionListRowSelect(params: Readonly<{ userId: string; 
             ? createV2SessionDetailPendingNoEffectCountSelect(params.pendingBlockedNoEffectCountSessionId)
             : {}),
         shares: {
-            where: { sharedWithUserId: params.userId },
+            where: createSessionSharedWithUserWhere(params.userId),
             select: V2_SESSION_LIST_SHARE_SELECT,
         },
     } as const satisfies Prisma.SessionSelect;
@@ -238,7 +237,7 @@ export function createV2SessionListLegacyRowSelect(params: Readonly<{ userId: st
             ? createV2SessionDetailPendingNoEffectCountSelect(params.pendingBlockedNoEffectCountSessionId)
             : {}),
         shares: {
-            where: { sharedWithUserId: params.userId },
+            where: createSessionSharedWithUserWhere(params.userId),
             select: V2_SESSION_LIST_SHARE_SELECT,
         },
     } as const satisfies Prisma.SessionSelect;

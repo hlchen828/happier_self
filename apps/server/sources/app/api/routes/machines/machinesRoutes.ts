@@ -36,6 +36,10 @@ import { isPlainMachineDataKeyMarker, machineStoredContentMatchesAccountMode } f
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { registerMachineContentKeyTransitionRoutes } from "./registerMachineContentKeyTransitionRoutes";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
+import { managedAccountAccess } from '@/app/account/managedAccounts/access';
+import { registerManagedMachineRoutes } from '@/app/account/managedAccounts/routes';
+import { listManagedMachines, readManagedMachine } from '@/app/account/managedAccounts/machineProjection';
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -103,6 +107,7 @@ function isMachineRevokedError(value: unknown): value is { error: 'machine_revok
 
 export function machinesRoutes(app: Fastify) {
     registerMachineContentKeyTransitionRoutes(app);
+    registerManagedMachineRoutes(app);
     app.post('/v1/machines', {
         preHandler: app.authenticate,
         schema: {
@@ -145,6 +150,17 @@ export function machinesRoutes(app: Fastify) {
             contentPublicKeyFingerprint,
         } = request.body;
 
+        const managedActor = configuredAdministratorPublicKey() ? await managedAccountAccess(userId) : null;
+        if (managedActor) {
+            if (managedActor.role !== 'machine' || (managedActor.machineId && managedActor.machineId !== id)) {
+                return reply.code(403).send({ error: 'machine-identity-required' });
+            }
+            const account = await db.account.findUnique({ where: { id: userId }, select: { contentPublicKey: true, contentPublicKeySig: true } });
+            const keyBytes = typeof dataEncryptionKey === 'string' ? privacyKit.decodeBase64(dataEncryptionKey) : null;
+            if (!account?.contentPublicKey || !account.contentPublicKeySig || !keyBytes || keyBytes.length !== 105 || keyBytes[0] !== 0) {
+                return reply.code(400).send({ error: 'managed-e2ee-required' });
+            }
+        }
         const plainRegistration = isPlainMachineDataKeyMarker(dataEncryptionKey);
         if (plainRegistration && !isServerFeatureEnabledForRequest('encryption.plaintextMachine', process.env)) {
             return reply.code(404).send({ error: 'not_found' });
@@ -563,6 +579,7 @@ export function machinesRoutes(app: Fastify) {
                         data: {
                             id,
                             accountId: userId,
+                            ...(managedActor ? { managedIdentityAccountId: userId } : {}),
                             metadata,
                             metadataVersion: 1,
                             daemonState: daemonState || null,
@@ -625,6 +642,7 @@ export function machinesRoutes(app: Fastify) {
                 // If we lost the race, fetch the winner row and return it instead of surfacing a 500.
                 if (isPrismaErrorCode(e, 'P2002')) {
                     const existingSameAccount = await db.machine.findFirst({ where: { accountId: userId, id } });
+                    if (managedActor && !existingSameAccount) return reply.code(403).send({ error: 'machine-identity-already-bound' });
                     if (existingSameAccount) {
                         if (existingSameAccount.revokedAt) {
                             return reply.code(410).send({ error: 'machine_revoked' });
@@ -773,6 +791,8 @@ export function machinesRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
 
+        if (configuredAdministratorPublicKey()) return listManagedMachines(userId);
+
         // The response is a bare array with no pagination metadata, so this read stays unbounded:
         // a row cap here would be silent truncation a client could not detect. The cost guard is
         // the explicit projection, which keeps the payload to the columns the serializer emits.
@@ -807,6 +827,10 @@ export function machinesRoutes(app: Fastify) {
             }
         });
 
+        if (configuredAdministratorPublicKey()) {
+            const projected = await readManagedMachine(userId, id);
+            return projected ? { machine: projected } : reply.code(404).send({ error: 'Machine not found' });
+        }
         if (!machine) {
             return reply.code(404).send({ error: 'Machine not found' });
         }

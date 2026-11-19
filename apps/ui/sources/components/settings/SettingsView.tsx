@@ -41,6 +41,7 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopSettingsSection } from '@/components/settings/desktop/DesktopSettingsSection';
 import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
+import { ManagedAccountsEntry } from '@/components/settings/account/ManagedAccountsEntry';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Icon } from '@/components/ui/icons/Icon';
 import { describeUpdatesSettingsSubtitle } from '@/components/updates/describeUpdatesSummary';
@@ -217,6 +218,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const profileAndAccountSection = React.useMemo(() => (
         <ItemGroup title={t('settings.profileAndAccount')}>
+            <ManagedAccountsEntry />
             <Item
                 title={t('settings.account')}
                 subtitle={t('settings.accountSubtitle')}

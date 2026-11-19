@@ -13,6 +13,12 @@ In current development source, source-based server images install the production
 
 Run `yarn --cwd apps/server validate:redis-adapter` from a development checkout to check fanout. Set `REDIS_URL` to use an existing Redis instance, or let the development dependency acquire and start a temporary instance. The root package configuration defers that acquisition until validation runs, so ordinary dependency installation does not require Redis build tools.
 
+## Managed accounts (development source)
+
+The local managed deployment selects one administrator by `HAPPIER_ADMIN_PUBLIC_KEY` (64-character Ed25519 signing-public-key hex), rather than signup order. The server advertises the canonical `accounts.machineAccess` feature only when that authority is configured. Use E2EE storage, independently enrolled machine credentials, expiring invitations and machine grants; do not place administrator credential files on a shared execution host. The full operator workflow is in the [auth guide](../apps/docs/content/docs/self-hosting/auth.mdx#administrator-managed-machines-development-source), and key/trust boundaries are in [encryption](encryption.md#managed-machine-access-development).
+
+The new `20261116120000_managed_machine_accounts` migration is additive and has separate PostgreSQL, SQLite and MySQL variants. Apply it through the existing single-owner migration workflow only after backup and review against the target provider. It does not assign existing accounts roles, rotate installed daemon credentials, or backfill relationships from encrypted session metadata. The invitation-selection extension adds a separate migration for persisted machine IDs; old invitations default to an empty selection. Apply that migration before deploying clients that use `accounts.inviteMachineAssignment`. Do not rewrite the earlier migration after it has been applied to retained data. Implementing and locally testing this change does not authorize migration of a retained or production database. Modified clients negotiate managed behavior; unmodified clients do not provide the invitation/machine-identity flow.
+
 ## Services for the full Postgres/S3 recipe
 1. **Postgres**
    - Owns persisted data in this recipe; light SQLite deployments use persistent local storage instead.

@@ -15,6 +15,9 @@ import {
     type EphemeralPayload,
 } from "./eventPayloadTypes";
 
+import { managedMachineRecipientIds } from '@/app/account/managedAccounts/machineParticipants';
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
+
 const MAX_SOCKET_METRIC_LABEL_LENGTH = 80;
 const SAFE_SOCKET_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
 const SOCKET_PAYLOAD_BYTES_SAMPLE_RATE = 100;
@@ -73,6 +76,12 @@ class EventRouter {
         return this.userConnections.get(userId);
     }
 
+    /** Revoke live access on every Socket.IO adapter worker, not just this process. */
+    disconnectAccount(userId: string): void {
+        if (this.io) this.io.in(`user:${userId}`).disconnectSockets(true);
+        else for (const connection of this.userConnections.get(userId) ?? []) connection.socket.disconnect(true);
+    }
+
     /** Query the account's live socket owner, including other Redis-adapter workers. */
     async hasFocusedComputerUi(userId: string): Promise<boolean> {
         const isFocused = (data: HappierSocketData) => data.clientType === 'user-scoped'
@@ -129,6 +138,13 @@ class EventRouter {
         recipientFilter?: RecipientFilter;
         skipSenderConnection?: ClientConnection;
     }): void {
+        if (configuredAdministratorPublicKey() && params.payload.type === 'machine-activity' && typeof params.payload.id === 'string') {
+            void managedMachineRecipientIds(params.payload.id).then((ids) => {
+                for (const userId of ids) {
+                    if (userId !== params.userId) this.emit({ userId, eventName: 'ephemeral', payload: params.payload, recipientFilter: { type: 'user-scoped-only' } });
+                }
+            }).catch((error) => log({ module: 'websocket', level: 'error', error }, 'Unable to publish managed machine presence'));
+        }
         this.emit({
             userId: params.userId,
             eventName: 'ephemeral',

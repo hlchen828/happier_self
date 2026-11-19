@@ -3753,6 +3753,7 @@ export {
 
 export { assertAccountKeyProvisioningAllowed, AccountKeyProvisioningUnavailableError, verifyAccountContentPublicKeyBinding, createAccountContentPublicKeyBindingMessage } from './auth/accountKeyProvisioning.js';
 export { PushNotificationTestRequestSchema, PushNotificationTestResultSchema, type PushNotificationTestResult } from './push/pushNotificationTest.js';
+export * from './account/managedMachineAccess.js';
 
 export { projectNotificationQuestion, readNotificationQuestionAnswer, isNotificationQuestionAnswerAction, NotificationQuestionAnswerV1Schema, NOTIFICATION_QUESTION_MAX_CHOICES, type NotificationQuestionAnswerV1 } from './push/notificationQuestionActions.js';
 export {

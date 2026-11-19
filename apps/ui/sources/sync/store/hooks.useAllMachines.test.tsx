@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useAllMachines, useFirstVisibleMachineId, useLaunchSelectionMachines, useMachineCliDetectionTarget, useMachineDisplayById, useMachineListByServerId, useSessionChatFooterState, useSessionForkSupportSource } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -12,6 +12,44 @@ afterEach(() => {
 });
 
 describe('useAllMachines', () => {
+    it('publishes managed enrollment changes without replacing unrelated machine references', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState({ isDataReady: true, machines: {}, machineListByServerId: {} });
+            const legacy = createMachineFixture({ id: 'enrollment-machine' });
+            const unrelated = createMachineFixture({ id: 'unrelated-machine' });
+            storage.getState().applyMachines([legacy, unrelated], true);
+            const hook = await renderHook(() => useAllMachines());
+            const heldOther = hook.getCurrent().find((machine) => machine.id === unrelated.id);
+            await act(async () => { storage.getState().applyMachines([{ ...legacy, managed: true }], false); });
+            expect(hook.getCurrent().find((machine) => machine.id === legacy.id)?.managed).toBe(true);
+            expect(hook.getCurrent().find((machine) => machine.id === unrelated.id)).toBe(heldOther);
+            const held = hook.getCurrent();
+            await act(async () => { storage.getState().applyMachines([{ ...legacy, managed: true }], false); });
+            expect(hook.getCurrent()).toBe(held);
+            await hook.unmount();
+        } finally { storage.setState(previousState); }
+    });
+    it('includes only requested retired grants and updates when that administration intent changes', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState({ isDataReady: true, machines: {}, machineListByServerId: {} });
+            const assigned = createMachineFixture({ id: 'assigned-retired', revokedAt: 1 });
+            const unassigned = createMachineFixture({ id: 'unassigned-retired', replacedByMachineId: 'replacement', replacedAt: 1 });
+            storage.getState().applyMachines([assigned, unassigned], true);
+            const hook = await renderHook((ids: readonly string[]) => useAllMachines(true, { includeRetiredIds: ids }), {
+                initialProps: [assigned.id],
+            });
+            expect(hook.getCurrent().map((machine) => machine.id)).toEqual([assigned.id]);
+            const held = hook.getCurrent();
+            await act(async () => { storage.getState().applyMachines([assigned, unassigned], false); });
+            expect(hook.getCurrent()).toBe(held);
+            await hook.rerender([]);
+            expect(hook.getCurrent()).toEqual([]);
+            await hook.unmount();
+        } finally { storage.setState(previousState); }
+    });
+
     it('tracks the first visible machine id only while demanded', async () => {
         const previousState = storage.getState();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
@@ -104,6 +142,37 @@ describe('useAllMachines', () => {
 
             await hook.rerender(false);
             expect(hook.getCurrent()).toBeNull();
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('holds the last machine inventory without live renders while not presented and catches up on focus', async () => {
+        const previousState = storage.getState();
+        const first = createMachineFixture({ id: 'presentation-machine' });
+        try {
+            storage.setState({ isDataReady: true, machines: {}, machineListByServerId: {} });
+            storage.getState().applyMachines([first], true);
+            let renders = 0;
+            const hook = await renderHook((presented: boolean) => {
+                renders += 1;
+                return useAllMachines(presented);
+            }, { initialProps: true, flushOptions: { cycles: 1, turns: 4 } });
+            expect(hook.getCurrent()[0]?.id).toBe(first.id);
+            await hook.rerender(false);
+            const held = hook.getCurrent();
+            const hiddenRenderCount = renders;
+            await act(async () => {
+                for (let version = 2; version <= 25; version += 1) {
+                    storage.getState().applyMachines([{ ...first, metadataVersion: version,
+                        metadata: { ...first.metadata!, host: `updated-${version}` } }], true);
+                }
+            });
+            expect(renders).toBe(hiddenRenderCount);
+            expect(hook.getCurrent()).toBe(held);
+            await hook.rerender(true);
+            expect(hook.getCurrent()[0]?.metadata?.host).toBe('updated-25');
             await hook.unmount();
         } finally {
             storage.setState(previousState);

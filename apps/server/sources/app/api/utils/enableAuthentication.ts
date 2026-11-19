@@ -3,6 +3,8 @@ import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
+import { enforceManagedHttpAuthorization } from '@/app/account/managedAccounts/httpAuthorization';
+import { ManagedAccessError } from '@/app/account/managedAccounts/access';
 
 function shouldLogAuthDecoratorDiagnostics(): boolean {
     return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
@@ -52,7 +54,9 @@ export function enableAuthentication(app: Fastify) {
                 log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);
             }
             request.userId = verified.userId;
+            await enforceManagedHttpAuthorization(request);
         } catch (error) {
+            if (error instanceof ManagedAccessError) return reply.code(error.statusCode).send({ error: error.code });
             return reply.code(401).send({ error: 'Authentication failed' });
         }
     });

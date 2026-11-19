@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
     CliUpdateFactsSchema,
+    ManagedMachineGrantResponseSchema,
     createAgentRuntimeDescriptorV1Schema,
     createAcpConfigOptionOverridesV1Schema,
     createAcpSessionModeOverrideV1Schema,
@@ -613,6 +614,9 @@ export const MachineMetadataSchema = z.object({
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>;
 
 export interface Machine {
+    /** Genuine managed enrollment, published by the relay; absence is not proof of enrollment. */
+    managed?: boolean;
+    managedAccessStatus?: z.infer<typeof ManagedMachineGrantResponseSchema>['status'];
     id: string;
     seq: number;
     createdAt: number;

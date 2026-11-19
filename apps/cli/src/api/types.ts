@@ -386,6 +386,8 @@ export type DaemonState = z.infer<typeof DaemonStateSchema>
 
 export type Machine = {
   id: string,
+  /** Established by managed registration, not inferred from encryption mode. */
+  managed?: true;
   publishedDataEncryptionKey?: string | null;
   metadata: MachineMetadata | null,
   metadataVersion: number,

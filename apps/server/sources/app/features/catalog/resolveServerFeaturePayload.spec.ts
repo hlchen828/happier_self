@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
+import { resolveManagedMachineAccessFeature } from "../managedMachineAccessFeature";
 import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
@@ -16,6 +17,19 @@ function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
 }
 
 describe("resolveServerFeaturePayload", () => {
+    it("advertises invitation machine assignment only with managed access and its canonical build policy", () => {
+        const enabled = { HAPPIER_ADMIN_PUBLIC_KEY: '11'.repeat(32) };
+        expect(resolveServerFeaturePayload(enabled, serverFeatureRegistry).features.accounts).toEqual({
+            machineAccess: { enabled: true }, inviteMachineAssignment: { enabled: true },
+        });
+        for (const env of [
+            {},
+            { ...enabled, HAPPIER_BUILD_FEATURES_DENY: 'accounts.machineAccess' },
+            { ...enabled, HAPPIER_BUILD_FEATURES_DENY: 'accounts.inviteMachineAssignment' },
+        ]) {
+            expect(resolveServerFeaturePayload(env, [resolveManagedMachineAccessFeature]).features.accounts.inviteMachineAssignment.enabled).toBe(false);
+        }
+    });
     it("advertises recovery details only when quota dependencies and build policy allow them", () => {
         const featureId = "quotaRecoveryCreditDetails";
         expect(resolveServerFeaturePayload({}, [resolveConnectedServicesFeature]).features.connectedServices[featureId].enabled).toBe(true);

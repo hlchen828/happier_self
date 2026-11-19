@@ -7,6 +7,7 @@ import { resolveVoiceFeature } from '../voiceFeature';
 import { resolveFriendsFeature } from '../friendsFeature';
 import { resolveOAuthFeature } from '../oauthFeature';
 import { resolveAuthFeature } from '../authFeature';
+import { resolveManagedMachineAccessFeature } from '../managedMachineAccessFeature';
 import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
 import { resolveChannelBridgesFeature } from '../channelBridgesFeature';
 import { resolveUpdatesFeature } from '../updatesFeature';
@@ -28,6 +29,7 @@ import { resolveSessionProtocolCapabilitiesFeature } from '../sessionProtocolCap
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
 const serverFeatureResolvers = [
+    (env) => resolveManagedMachineAccessFeature(env),
     (env) => resolveServerUrlCapabilitiesFeature(env),
     (env) => resolveServerRetentionCapabilitiesFeature(env),
     () => resolveSessionProtocolCapabilitiesFeature(),

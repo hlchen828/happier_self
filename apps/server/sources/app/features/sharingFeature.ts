@@ -1,4 +1,5 @@
 import type { FeaturesPayloadDelta } from "./types";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
 
 export function resolveSharingFeature(
     _env: NodeJS.ProcessEnv = {},
@@ -7,7 +8,7 @@ export function resolveSharingFeature(
         features: {
             sharing: {
                 session: { enabled: true },
-                public: { enabled: true },
+                public: { enabled: configuredAdministratorPublicKey(_env) === null },
                 contentKeys: { enabled: true },
                 pendingQueueV2: { enabled: true },
                 pendingDeliveryState: { enabled: true },

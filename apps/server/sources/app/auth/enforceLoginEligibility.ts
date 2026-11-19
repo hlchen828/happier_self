@@ -4,6 +4,7 @@ import { isAccountDisabled } from "@/app/auth/accountDisable";
 import { findIdentityProviderById } from "@/app/auth/providers/identityProviders/registry";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
+import { configuredAdministratorPublicKey, managedRoleForAccount } from '@/app/account/managedAccounts/policy';
 
 export async function enforceLoginEligibility(params: {
     accountId: string;
@@ -14,11 +15,12 @@ export async function enforceLoginEligibility(params: {
     if (!accountId) return { ok: false, statusCode: 401, error: "invalid-token" };
 
     const policy = resolveAuthPolicyFromEnv(params.env);
-    let account: { id: string } | null = null;
+    const administratorPublicKey = configuredAdministratorPublicKey(params.env);
+    let account: { id: string; publicKey?: string | null; managedRole?: string } | null = null;
     try {
         account = await db.account.findUnique({
             where: { id: accountId },
-            select: { id: true },
+            select: { id: true, ...(administratorPublicKey ? { publicKey: true, managedRole: true } : {}) },
         });
     } catch (error) {
         log(
@@ -29,6 +31,9 @@ export async function enforceLoginEligibility(params: {
         return { ok: false, statusCode: 503, error: "upstream_error" };
     }
     if (!account) return { ok: false, statusCode: 401, error: "invalid-token" };
+    if (administratorPublicKey && managedRoleForAccount({ publicKey: account.publicKey ?? null, managedRole: account.managedRole ?? 'unmanaged' }, administratorPublicKey) === 'unmanaged') {
+        return { ok: false, statusCode: 403, error: 'not-eligible' };
+    }
     let disabled = false;
     try {
         disabled = await isAccountDisabled({ accountId: account.id });

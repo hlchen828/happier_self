@@ -10,6 +10,7 @@ import type {
     SessionRuntimeIssueV1,
     SessionDraftSocketUpdateV1,
     SessionStoredMessageContent,
+    ManagedAccessChangedUpdateBody,
 } from "@happier-dev/protocol";
 
 // === CONNECTION TYPES ===
@@ -369,7 +370,7 @@ export interface UpdatePayload {
     id: string;
     seq: number;
     body: {
-        t: UpdateEvent['type'];
+        t: UpdateEvent['type'] | ManagedAccessChangedUpdateBody['t'];
         [key: string]: any;
     };
     createdAt: number;

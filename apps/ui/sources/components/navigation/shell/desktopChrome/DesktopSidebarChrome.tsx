@@ -17,6 +17,7 @@ import { DesktopShellWindowControlsHost } from './DesktopShellWindowControlsHost
 import { SidebarCollapseIcon } from '../SidebarIcons';
 import { SidebarLogoButton } from '../SidebarLogoButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { IconAction } from '@/components/ui/buttons/IconAction';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { InboxPopoverButton } from '@/components/inbox/InboxPopoverButton';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
@@ -88,6 +89,23 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
         );
     }, [styles.topIconButton, styles.topSettingsIconButton, theme.colors.chrome.header.foreground]);
 
+    const collapseButton = props.onPressCollapse ? (
+        <IconAction
+            testID="sidebar-collapse-button"
+            onPress={props.onPressCollapse}
+            hitSlop={hasDesktopWindowControls ? 10 : undefined}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.collapse')}
+            size="sm"
+            style={hasDesktopWindowControls ? styles.topIconButton : styles.touchToggleButton}
+        >
+            <SidebarCollapseIcon
+                size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                color={theme.colors.chrome.header.foreground}
+            />
+        </IconAction>
+    ) : null;
+
     const actionsRow = (
         <View testID="desktop-sidebar-chrome-actions-row" style={styles.rightContainer}>
             <ItemRowActions
@@ -147,6 +165,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                     </Pressable>
                 )}
             />
+            {hasDesktopWindowControls ? null : collapseButton}
         </View>
     );
 
@@ -207,21 +226,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                             testID="desktop-sidebar-updates-button"
                         />
                         {topUtilityActions.map(renderTopUtilityAction)}
-                        {props.onPressCollapse ? (
-                            <Pressable
-                                testID="sidebar-collapse-button"
-                                onPress={props.onPressCollapse}
-                                hitSlop={10}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('common.collapse')}
-                                style={styles.topIconButton}
-                            >
-                                <SidebarCollapseIcon
-                                    size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
-                                    color={theme.colors.chrome.header.foreground}
-                                />
-                            </Pressable>
-                        ) : null}
+                        {collapseButton}
                     </View>
                 </View>
             ) : null}

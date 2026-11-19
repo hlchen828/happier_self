@@ -28,6 +28,16 @@ describe('resolveMachinesForActiveServerFromState', () => {
         expect(machines).toEqual([]);
     });
 
+    it('includes assigned retired machines without widening active-server authority', async () => {
+        activeServerId = 'server-b';
+        const { resolveVisibleMachinesForActiveServerFromState } = await import('./resolveMachinesForActiveServerFromState');
+        const retired = { id: 'retired-b', active: false, createdAt: 1, revokedAt: 1 };
+        const other = { ...retired, id: 'retired-a' };
+        const state = { machines: { [retired.id]: retired, [other.id]: other }, machineListByServerId: { 'server-b': [retired] } };
+        expect(resolveVisibleMachinesForActiveServerFromState(state)).toEqual([]);
+        expect(resolveVisibleMachinesForActiveServerFromState(state, { includeRetiredIds: [retired.id, other.id] }).map((machine) => machine.id)).toEqual([retired.id]);
+    });
+
     it('rejects direct machine lookups outside the active server machine list', async () => {
         activeServerId = 'server-b';
         const { resolveMachineForActiveServerFromState } = await import('./resolveMachinesForActiveServerFromState');

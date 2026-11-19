@@ -79,6 +79,51 @@ async function loadFetchAndApplyMachines() {
 }
 
 describe('fetchAndApplyMachines machine data-key unwrapping', () => {
+    it.each([false, true])('carries genuine managed identity through unreadable and hydrated rows (warm display: %s)', async (warmDisplay) => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        const source = [
+            { ...machineRow('managed', null), managed: true, managedAccessStatus: 'pending' },
+            { ...machineRow('ordinary', null), managed: false },
+            machineRow('legacy', null),
+        ];
+        const machines: Machine[] = [];
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption, machineDataKeys: new Map(),
+            request: async () => jsonResponse(source), applyMachines: (rows) => machines.push(...rows),
+            ...(warmDisplay ? { applyMachineDisplayEntries: () => {}, getExistingMachine: () => null } : {}),
+        });
+        expect(machines.filter((machine) => machine.id === 'managed').every((machine) => machine.managed === true)).toBe(true);
+        expect(machines.find((machine) => machine.id === 'ordinary')?.managed).toBe(false);
+        expect(machines.find((machine) => machine.id === 'legacy')?.managed).toBeUndefined();
+        expect(machines.find((machine) => machine.id === 'managed')?.metadata).toBeNull();
+    });
+    it('keeps pending managed machines unavailable and clears a previously cached key', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['m1', new Uint8Array(32).fill(2)]]));
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>([
+            ['m1', { envelope: 'old-envelope', dataKey: new Uint8Array(32).fill(2) }],
+        ]);
+        const machines: Machine[] = [];
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption, machineDataKeys,
+            request: async () => jsonResponse([{ ...machineRow('m1', null), managedAccessStatus: 'pending' }]),
+            applyMachines: (rows) => machines.push(...rows),
+        });
+        expect(encryption.getMachineEncryption('m1')).toBeNull();
+        expect(machineDataKeys.has('m1')).toBe(false);
+        expect(machines[0]).toMatchObject({ managedAccessStatus: 'pending', metadata: null, daemonState: null });
+    });
+
+    it('forgets keys for resources absent from an authoritative replacement snapshot', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        const key = new Uint8Array(32).fill(2);
+        await encryption.initializeMachines(new Map([['revoked', key]]));
+        const keys = new Map<string, MachineDataKeyCacheEntry>([['revoked', { envelope: 'old', dataKey: key }]]);
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption, machineDataKeys: keys,
+            request: async () => jsonResponse([]), applyMachines: () => {}, replace: true,
+        });
+        expect(encryption.getMachineEncryption('revoked')).toBeNull();
+        expect(keys.has('revoked')).toBe(false);
+    });
+
     it('hydrates explicitly plain rows and evicts their prior encrypted key without opening the marker', async () => {
         const encryption = Encryption.createWithoutKeyMaterial();
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>([

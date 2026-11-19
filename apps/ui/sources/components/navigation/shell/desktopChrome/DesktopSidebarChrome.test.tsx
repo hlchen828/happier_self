@@ -1,24 +1,30 @@
 import React from 'react';
 import { View } from 'react-native';
-import type { ReactTestInstance } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installNavigationShellCommonModuleMocks } from '../navigationShellTestHelpers';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+const platformState = vi.hoisted(() => ({ OS: 'web' as 'web' | 'android' | 'ios' }));
 
-const itemRowActionsState = vi.hoisted(() => ({
-    lastActionIds: [] as string[],
-}));
+const headerActions: ItemAction[] = [{
+    id: 'newSession',
+    title: 'New',
+    inlineTestID: 'nav-new-session',
+    icon: 'plus',
+    onPress: vi.fn(),
+}];
 
 installNavigationShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
+                get OS() { return platformState.OS; },
             },
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
             View: 'View',
@@ -37,34 +43,6 @@ vi.mock('@/components/updates/UpdatesPopoverButton', () => ({
 
 vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
     ConnectionStatusControl: 'ConnectionStatusControl',
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: {
-        actions: Array<{ id: string }>;
-        leadingPinnedContent?: React.ReactNode;
-        renderOverflowTrigger?: (params: {
-            open: boolean;
-            toggle: () => void;
-            testID: string;
-            accessibilityLabel: string;
-            accessibilityHint: string;
-        }) => React.ReactNode;
-    }) => {
-        itemRowActionsState.lastActionIds = props.actions.map((action) => action.id);
-        return React.createElement(
-            View,
-            { testID: 'desktop-sidebar-item-actions' },
-            props.leadingPinnedContent,
-            props.renderOverflowTrigger?.({
-                open: false,
-                toggle: vi.fn(),
-                testID: 'sidebar-header-actions-overflow',
-                accessibilityLabel: 'More actions',
-                accessibilityHint: 'Open more actions',
-            }),
-        );
-    },
 }));
 
 // Keep app drag eligibility and bridge behavior real; replace only native IPC.
@@ -88,13 +66,13 @@ function directChildTestIDs(instance: ReactTestInstance): string[] {
 
 describe('DesktopSidebarChrome', () => {
     beforeEach(() => {
+        platformState.OS = 'web';
         native.invoke.mockReset();
         native.invoke.mockImplementation(async (command: string) => {
             if (command === 'desktop_get_window_chrome_policy') return { strategy: 'custom-controls' };
             if (command === 'desktop_get_window_state') return { isMaximized: false };
             return true;
         });
-        itemRowActionsState.lastActionIds = [];
     });
 
     it('places utility controls above the branded sidebar row', async () => {
@@ -108,7 +86,7 @@ describe('DesktopSidebarChrome', () => {
                 onPressBack={vi.fn()}
                 onPressForward={vi.fn()}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 topUtilityActions={[{
                     id: 'settings',
                     title: 'settings.title',
@@ -147,6 +125,7 @@ describe('DesktopSidebarChrome', () => {
         expect(mountedIn(actionsRow, 'desktop-sidebar-action-operations')).toBe(true);
         expect(mountedIn(controlsRow, 'desktop-sidebar-action-operations')).toBe(false);
         expect(mountedIn(actionsRow, 'desktop-sidebar-updates-button')).toBe(false);
+        expect(mountedIn(actionsRow, 'sidebar-collapse-button')).toBe(false);
         // The title stays whole: no entry trails it any more.
         const titleContainer = screen.findByTestId('desktop-sidebar-title-container')!;
         expect(titleContainer.findByProps({ testID: 'desktop-sidebar-title-text' })).toBeTruthy();
@@ -162,7 +141,7 @@ describe('DesktopSidebarChrome', () => {
                 headerHeightPx={56}
                 onPressHome={vi.fn()}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 renderHeaderOverflowVisual={() => <View testID="desktop-sidebar-overflow-visual" />}
                 popoverBoundaryRef={{ current: null }}
             />,
@@ -177,6 +156,42 @@ describe('DesktopSidebarChrome', () => {
         expect(actionsRow.findAll((node) => node.props?.testID === 'desktop-sidebar-action-operations').length).toBeGreaterThan(0);
     });
 
+    it.each(['android', 'ios', 'web'] as const)('keeps collapse with the sidebar actions without desktop window controls on %s', async (platform) => {
+        platformState.OS = platform;
+        let collapsed = false;
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const screen = await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={320}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                onPressCollapse={() => { collapsed = true; }}
+                environmentBadge={null}
+                headerActions={[
+                    { id: 'settings', title: 'Settings', icon: 'gear', onPress: vi.fn() },
+                    { id: 'newSession', title: 'New', inlineTestID: 'nav-new-session', icon: 'plus', onPress: vi.fn() },
+                    { id: 'other', title: 'Other', icon: 'folder', onPress: vi.fn() },
+                ]}
+                renderHeaderOverflowVisual={() => <View testID="desktop-sidebar-overflow-visual" />}
+                popoverBoundaryRef={{ current: null }}
+            />,
+        );
+
+        const button = requireTestInstance(screen.findByTestId('sidebar-collapse-button'), 'collapse button');
+        const actionsRow = requireTestInstance(screen.findByTestId('desktop-sidebar-chrome-actions-row'), 'actions row');
+        expect(actionsRow.findAll((node) => node === button)).toHaveLength(1);
+        expect(actionsRow.findAll((node) => node.props.testID === 'nav-new-session').length).toBeGreaterThan(0);
+        expect(actionsRow.findAll((node) => node.props.testID === 'sidebar-header-actions-overflow').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('desktop-sidebar-chrome-controls-row')).toBeNull();
+        expect(screen.findByTestId('desktop-window-controls-host')).toBeNull();
+        expect(button.props.accessibilityLabel).toBe('common.collapse');
+        expect(button.findByType('Icon' as never).props.name).toBe('sidebar-left-close');
+        await act(async () => {
+            await pressTestInstanceAsync(button);
+        });
+        expect(collapsed).toBe(true);
+    });
+
     it('starts window dragging from non-interactive sidebar top strip clicks', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
         const screen = await renderScreen(
@@ -188,7 +203,7 @@ describe('DesktopSidebarChrome', () => {
                 onPressBack={vi.fn()}
                 onPressForward={vi.fn()}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 renderHeaderOverflowVisual={() => <View testID="desktop-sidebar-overflow-visual" />}
                 popoverBoundaryRef={{ current: null }}
                 desktopWindowControls={<View testID="injected-desktop-window-controls" />}
@@ -220,7 +235,7 @@ describe('DesktopSidebarChrome', () => {
                 canNavigateBack={false}
                 canNavigateForward={true}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 renderHeaderOverflowVisual={() => <View testID="desktop-sidebar-overflow-visual" />}
                 popoverBoundaryRef={{ current: null }}
                 desktopWindowControls={<View testID="injected-desktop-window-controls" />}
@@ -238,7 +253,7 @@ describe('DesktopSidebarChrome', () => {
 
     it('keeps top utility actions out of the content action row when window controls are active', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
-        await renderScreen(
+        const screen = await renderScreen(
             <DesktopSidebarChrome
                 sidebarWidthPx={600}
                 headerHeightPx={56}
@@ -259,7 +274,10 @@ describe('DesktopSidebarChrome', () => {
             />,
         );
 
-        expect(itemRowActionsState.lastActionIds).toEqual(['newSession']);
+        const actionsRow = requireTestInstance(screen.findByTestId('desktop-sidebar-chrome-actions-row'), 'actions row');
+        expect(actionsRow.findAll((node) => node.props.testID === 'nav-new-session').length).toBeGreaterThan(0);
+        expect(actionsRow.findAll((node) => node.props.testID === 'nav-settings')).toHaveLength(0);
+        expect(actionsRow.findAll((node) => node.props.testID === 'sidebar-inbox-button')).toHaveLength(0);
     });
 
     // This strip sits beside the traffic lights, which are 12px. Every glyph in it moved to the app's
@@ -277,7 +295,7 @@ describe('DesktopSidebarChrome', () => {
                 onPressBack={vi.fn()}
                 onPressForward={vi.fn()}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 topUtilityActions={[{
                     id: 'settings',
                     title: 'settings.title',
@@ -311,7 +329,7 @@ describe('DesktopSidebarChrome', () => {
                 onPressHome={vi.fn()}
                 onPressCollapse={vi.fn()}
                 environmentBadge={null}
-                headerActions={[]}
+                headerActions={headerActions}
                 renderHeaderOverflowVisual={() => <View testID="desktop-sidebar-overflow-visual" />}
                 popoverBoundaryRef={{ current: null }}
                 desktopWindowControls={<View testID="injected-desktop-window-controls" />}

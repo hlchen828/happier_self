@@ -1,6 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import {
     parseSessionRuntimeActivityProjectionFields,
+    ManagedMachineGrantResponseSchema,
     PrimaryTurnStatusV1Schema,
     SessionOrganizationSnapshotSchema,
     SessionRuntimeActivityStateSchema,
@@ -281,6 +282,8 @@ export const SessionListCacheEntryV1Schema = z.object({
 export type SessionListCacheEntryV1 = z.infer<typeof SessionListCacheEntryV1Schema>;
 
 export const MachineDisplayCacheEntryV1Schema = z.object({
+    managed: z.boolean().optional(),
+    managedAccessStatus: ManagedMachineGrantResponseSchema.shape.status.optional(),
     machineId: z.string().min(1),
     metadataVersion: z.number().int().nonnegative(),
     updatedAt: z.number(),
@@ -398,6 +401,17 @@ function saveScopedRecord<T extends Record<string, unknown>>(key: string | null,
         return;
     }
     storage.set(key, JSON.stringify(value));
+}
+
+export function clearWarmCachesForScope(serverId: string, accountId: string): void {
+    const storage = getWarmCacheStorage();
+    for (const prefix of [SESSION_LIST_WARM_CACHE_PREFIX, MACHINE_DISPLAY_WARM_CACHE_PREFIX, SESSION_ORGANIZATION_WARM_CACHE_PREFIX]) {
+        const key = buildScopedKey(prefix, serverId, accountId);
+        if (!key) continue;
+        storage?.delete(key);
+        persistedSessionListBaseline.forget(key);
+        persistedMachineDisplayBaseline.forget(key);
+    }
 }
 
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {

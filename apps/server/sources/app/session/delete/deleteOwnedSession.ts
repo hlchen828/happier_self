@@ -1,4 +1,5 @@
 import { afterTx, inTx } from '@/storage/inTx';
+import { checkSessionAccess, requireAccessLevel } from '@/app/share/accessControl';
 import { log } from '@/utils/logging/log';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 
@@ -12,11 +13,17 @@ import { tombstoneSessionDraftForLifecycleInTx } from '@/app/account/sessionDraf
 export async function deleteOwnedSession(params: {
     sessionId: string;
     ownerAccountId?: string | null;
+    /** Managed human resource authority must be checked in the deletion transaction. */
+    requestingAccountId?: string;
     reason: 'user_request' | 'retention_policy';
     sessionWhereGuard?: Record<string, unknown>;
 }): Promise<boolean> {
     try {
         return await inTx(async (tx) => {
+            if (params.requestingAccountId) {
+                const access = await checkSessionAccess(params.requestingAccountId, params.sessionId, tx);
+                if (!access || !requireAccessLevel(access, 'admin')) return false;
+            }
             const session = await loadSessionDeleteRecipients(tx as any, {
                 sessionId: params.sessionId,
                 ownerAccountId: params.ownerAccountId ?? null,
