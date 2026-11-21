@@ -6,6 +6,18 @@ import { convertSDKToLog } from './sdkToLogConverter';
 import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testkit';
 
 describe('SDKToLogConverter tool result mode metadata', () => {
+  it.each([false, true])('retains synthetic Skill tool results (is_error=%s)', (is_error) => {
+    const content = [{ type: 'tool_result', tool_use_id: 'skill-tool', content: 'Skill tool outcome', is_error }];
+    const result = createConverter().convert({
+      type: 'user',
+      isSynthetic: true,
+      message: { role: 'user', content },
+    });
+
+    expect(result).toMatchObject({ type: 'user', message: { content } });
+    expect(result?.isMeta).not.toBe(true);
+  });
+
   it('stores repeated native stdout once while retaining command and task facts', () => {
     const text = 'Detailed command report\n'.repeat(100);
     const native = { stdout: text, backgroundTaskId: 'command-task', exit_code: 0, structuredPatch: [{ oldStart: 1, newStart: 1 }] };

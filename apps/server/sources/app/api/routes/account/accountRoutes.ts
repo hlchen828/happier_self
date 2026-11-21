@@ -11,8 +11,10 @@ import { registerAccountActivityBadgeSnapshotRoute } from "./registerAccountActi
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerAccountPetLibraryRoutes } from "@/app/pets/accountPetLibraryRoutes";
 import { registerSessionDraftRoutes } from "@/app/account/sessionDrafts/registerSessionDraftRoutes";
+import { registerManagedAccountRoutes } from '@/app/account/managedAccounts/routes';
 
 export function accountRoutes(app: Fastify): void {
+    registerManagedAccountRoutes(app);
     registerAccountProfileRoute(app);
     registerAccountIdentityVisibilityRoute(app);
     registerAccountUsernameRoute(app);

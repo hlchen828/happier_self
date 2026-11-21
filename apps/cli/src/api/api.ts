@@ -23,6 +23,7 @@ import { Credentials } from '@/persistence';
 
 import { resolveSessionEncryptionContext } from './client/encryptionKey';
 import { resolveMachineRegistrationContent, resolvePublishedMachineContent } from './machine/resolveMachineRegistrationContent';
+import { publishManagedMachineKeys } from './machine/managedMachineKeyDelivery';
 import { decodeMachineStoredContent, encodeMachineStoredContent } from './machine/machineStoredContent';
 import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
@@ -420,9 +421,10 @@ export class ApiClient {
     const sessionsUrl = withConnectedServiceReaderSupport(`${resolveServerHttpBaseUrl()}/v1/sessions`);
 
     const serverBaseUrl = resolveServerHttpBaseUrl();
-    const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
+    const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot, managedMachineId } = await resolveSessionCreateEncryptionMode({
       token: this.credential.token,
       serverBaseUrl,
+      machineId: opts.metadata.machineId,
       featuresTimeoutMs: configuration.sessionControlHttpTimeoutMs,
       accountTimeoutMs: configuration.sessionControlHttpTimeoutMs,
     });
@@ -483,6 +485,7 @@ export class ApiClient {
                   ? encodeBase64(encryptionContext.dataEncryptionKey)
                   : null,
             ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
+            ...(managedMachineId ? { machineId: managedMachineId } : {}),
           },
           {
             headers: {
@@ -675,6 +678,7 @@ export class ApiClient {
       const content = resolvePublishedMachineContent(this.credential, raw.dataEncryptionKey, registrationContent.accountMode);
       const machine: Machine = {
         id: raw.id,
+        ...(registrationContent.managed ? { managed: true as const } : {}),
         publishedDataEncryptionKey: content.dataEncryptionKey,
         ...content.context,
         metadata: raw.metadata ? decodeMachineStoredContent(content.context, raw.metadata) : null,
@@ -682,6 +686,15 @@ export class ApiClient {
         daemonState: raw.daemonState ? decodeMachineStoredContent(content.context, raw.daemonState) : null,
         daemonStateVersion: raw.daemonStateVersion || 0,
       };
+      if (machine.managed) {
+        try {
+          await publishManagedMachineKeys({ credentials: this.credential, machine });
+        } catch (error) {
+          logger.warn('[MANAGED MACHINE] Initial key delivery failed; affected resources remain pending until daemon reconciliation.', {
+            error: serializeAxiosErrorForLog(error),
+          });
+        }
+      }
       return machine;
     } catch (error) {
       if (

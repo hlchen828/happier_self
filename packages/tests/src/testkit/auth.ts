@@ -2,7 +2,32 @@ import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { randomBytes } from 'node:crypto';
 
+import { createAccountContentPublicKeyBindingMessage, deriveAccountMachineKeyFromRecoverySecret, deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+
 import { fetchJson } from './http';
+
+/** Real keyed identities for managed-relay fixtures; the daemon still enrolls through CLI auth. */
+export function createTestAuthIdentity() {
+  const recoverySecret = Uint8Array.from(randomBytes(32));
+  const signing = tweetnacl.sign.keyPair.fromSeed(recoverySecret);
+  const machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
+  const contentPublicKey = deriveBoxPublicKeyFromSeed(machineKey);
+  const challenge = Uint8Array.from(randomBytes(32));
+  return {
+    recoverySecret,
+    machineKey,
+    publicKeyHex: privacyKit.encodeHex(Uint8Array.from(signing.publicKey)),
+    body: {
+      publicKey: privacyKit.encodeBase64(Uint8Array.from(signing.publicKey)),
+      challenge: privacyKit.encodeBase64(challenge),
+      signature: privacyKit.encodeBase64(Uint8Array.from(tweetnacl.sign.detached(challenge, signing.secretKey))),
+      contentPublicKey: privacyKit.encodeBase64(Uint8Array.from(contentPublicKey)),
+      contentPublicKeySig: privacyKit.encodeBase64(Uint8Array.from(tweetnacl.sign.detached(
+        createAccountContentPublicKeyBindingMessage(contentPublicKey), signing.secretKey,
+      ))),
+    },
+  };
+}
 
 export type TestAuth = {
   token: string;

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { readServerEnabledBit, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { readServerEnabledBit, MACHINE_PLAIN_DATA_KEY_MARKER, ManagedAccountAccessResponseSchema } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { encodeBase64 } from '@/api/encryption';
 import { resolveMachineEncryptionContext } from '@/api/client/encryptionKey';
@@ -14,6 +14,7 @@ export type MachineRegistrationContent = Readonly<{
   context: MachineEncryptionContext;
   dataEncryptionKey: string | null;
   accountMode: 'plain' | 'e2ee' | 'unknown';
+  managed?: true;
 }>;
 
 /** Published storage mode and key govern reads, even after account opt-out. */
@@ -27,6 +28,25 @@ export async function resolveMachineRegistrationContent(params: Readonly<{
 }>): Promise<MachineRegistrationContent> {
   const serverBaseUrl = resolveServerHttpBaseUrl();
   const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: serverBaseUrl, timeoutMs: params.timeoutMs });
+  if (snapshot.status === 'ready' && readServerEnabledBit(snapshot.features, 'accounts.machineAccess') === true) {
+    const accessResponse = await axios.get<unknown>(`${serverBaseUrl}/v1/account/access`, {
+      headers: { Authorization: `Bearer ${params.credentials.token}` },
+      ...(params.timeoutMs ? { timeout: params.timeoutMs } : {}),
+    });
+    const access = ManagedAccountAccessResponseSchema.parse(accessResponse.data);
+    if (!access.managed || access.role !== 'machine' || (access.machineId !== null && access.machineId !== params.machineId)) {
+      throw new Error('Managed relays require a separately enrolled identity for this machine. Administrator and member credentials cannot register a daemon.');
+    }
+    const row = await fetchAccountMachine(params);
+    if (row) {
+      if (typeof row.dataEncryptionKey !== 'string' || !row.dataEncryptionKey) {
+        throw new Error('A managed machine must publish an independent resource-key envelope.');
+      }
+      return { ...resolvePublishedMachineContent(params.credentials, row.dataEncryptionKey, 'e2ee'), managed: true };
+    }
+    const context = resolveMachineEncryptionContext(params.credentials, { independentResourceKey: true });
+    return { context, dataEncryptionKey: encodeBase64(context.dataEncryptionKey!), accountMode: 'e2ee', managed: true };
+  }
   const supportsPlain = snapshot.status === 'ready' && readServerEnabledBit(snapshot.features, 'encryption.plaintextMachine') === true;
   if (!supportsPlain) {
     const context = resolveMachineEncryptionContext(params.credentials);

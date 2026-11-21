@@ -34,6 +34,8 @@ export type ContinueSessionWithReplayParams = Readonly<{
 }>;
 
 export type ContinueSessionWithReplayDeps = Readonly<{
+    /** Actual enrolled identity of the daemon receiving this request. */
+    machineId?: string;
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     runReplaySummaryForDialog?: RunReplaySummaryForDialogFn;
 }>;
@@ -129,6 +131,7 @@ export async function continueSessionWithReplay(
         const created = await createSpawnedSession({
             credentials,
             directory,
+            machineId: deps.machineId,
             backendTarget: { kind: 'builtInAgent', agentId },
             ...(typeof approvedNewDirectoryCreation === 'boolean'
                 ? { approvedNewDirectoryCreation }
@@ -177,8 +180,8 @@ export async function continueSessionWithReplay(
         });
         return {
             type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            errorMessage: 'Failed to create a new session for replay',
+            errorCode: failure.creationErrorCode,
+            errorMessage: failure.errorMessage,
         };
     }
 }

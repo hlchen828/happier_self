@@ -170,6 +170,17 @@ describe('socket update handling: new-machine', () => {
         storage.setState(initialStorageState, true);
     });
 
+    it('refreshes authoritative resources after a managed access change but ignores a retired scope', async () => {
+        const params = buildBaseParams({ encryption: await Encryption.create(new Uint8Array(32).fill(1)) });
+        const update = { id: 'access-change', seq: 43, createdAt: 124,
+            body: { t: 'managed-access-changed', machineId: 'm1' } };
+        await handleSocketUpdate({ ...params, update, shouldContinue: () => false });
+        expect(params.invalidateMachines).not.toHaveBeenCalled();
+        await handleSocketUpdate({ ...params, update, shouldContinue: () => true });
+        expect(params.invalidateMachines).toHaveBeenCalled();
+        expect(params.invalidateSessions).toHaveBeenCalled();
+    });
+
     it('initializes an explicit plain machine for subsequent updates without decrypting its marker', async () => {
         const encryption = Encryption.createWithoutKeyMaterial();
         const typedContent = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })), 'base64');

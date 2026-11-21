@@ -22,6 +22,7 @@ import {
 } from './sessionRuntimeActivity/projection.js';
 import { ActionOperationRevisionEphemeralV1Schema } from './actions/operations/actionOperationV1.js';
 import { lazySchema } from './lazySchema.js';
+import { ManagedAccessChangedUpdateBodySchema } from './account/managedMachineAccess.js';
 
 const TimestampMsSchema = lazySchema(() => z.number().int().min(0));
 const Base64Schema = lazySchema(() => z.string());
@@ -38,6 +39,7 @@ const VersionedStringSchema = lazySchema(() => z.object({
 }).passthrough());
 
 export const UpdateBodySchema = lazySchema(() => z.discriminatedUnion('t', [
+  ManagedAccessChangedUpdateBodySchema,
   z.object({
     t: z.literal('new-message'),
     sid: z.string(),

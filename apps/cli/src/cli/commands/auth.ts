@@ -1,10 +1,12 @@
 import chalk from 'chalk';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 
 import { showAuthHelp } from './auth/help';
 import { handleAuthApprove } from './auth/approve';
 import { handleAuthLogin } from './auth/login';
+import { handleAuthEnroll } from './auth/enroll';
 import { handleAuthLogout } from './auth/logout';
 import { handleAuthPairRemote } from './auth/pairRemote';
 import { handleAuthRequest } from './auth/request';
@@ -21,6 +23,9 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
   }
 
   switch (subcommand) {
+    case 'enroll':
+      await handleAuthEnroll(args.slice(1));
+      return;
     case 'login':
       await handleAuthLogin(args.slice(1));
       return;
@@ -53,9 +58,10 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
   try {
     await handleAuthCommand(context.args.slice(1));
   } catch (error) {
-    console.error(fail(error instanceof Error ? error.message : 'Unknown error'));
+    const diagnostic = serializeAxiosErrorForLog(error);
+    console.error(fail(String(diagnostic.message ?? 'Unknown error')));
     if (process.env.DEBUG) {
-      console.error(error);
+      console.error(diagnostic);
     }
     process.exit(1);
   }

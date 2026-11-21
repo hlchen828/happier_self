@@ -9,6 +9,18 @@ function defineFeatureCatalog<
 }
 
 const FEATURE_CATALOG_DEFINITION = {
+  'accounts.machineAccess': {
+    description: 'Administrator-managed independent accounts and E2EE machine grants.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'accounts.inviteMachineAssignment': {
+    description: 'Preauthorize managed machines when members redeem invitations.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['accounts.machineAccess'],
+    representation: 'server',
+  },
   automations: {
     description: 'Automations feature surfaces and scheduling runtime.',
     defaultFailMode: 'fail_closed',

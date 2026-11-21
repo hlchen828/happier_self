@@ -1,4 +1,5 @@
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
 import { resolveAuthProviderInstancesFromEnv } from "@/app/auth/providers/oidc/oidcProviderConfig";
 
 export type AuthOffboardingMode = "per-request-cache";
@@ -62,8 +63,9 @@ function hasAnyOffboardingRestrictionsConfigured(env: NodeJS.ProcessEnv): boolea
 }
 
 export function resolveAuthPolicyFromEnv(env: NodeJS.ProcessEnv): AuthPolicy {
-    const anonymousSignupEnabled = parseBooleanEnv(env.AUTH_ANONYMOUS_SIGNUP_ENABLED, true);
-    const signupProviders = Object.freeze(parseProvidersList(env.AUTH_SIGNUP_PROVIDERS));
+    const managed = configuredAdministratorPublicKey(env) !== null;
+    const anonymousSignupEnabled = !managed && parseBooleanEnv(env.AUTH_ANONYMOUS_SIGNUP_ENABLED, true);
+    const signupProviders = Object.freeze(managed ? [] : parseProvidersList(env.AUTH_SIGNUP_PROVIDERS));
     const requiredLoginProviders = Object.freeze(parseProvidersList(env.AUTH_REQUIRED_LOGIN_PROVIDERS));
 
     const restrictionsExist = hasAnyOffboardingRestrictionsConfigured(env);

@@ -107,7 +107,7 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
     };
 }
 
-export function readSessionScopedSocketBinding(socket: Socket): SessionScopedSocketBinding | null {
+export function readSessionScopedSocketBinding(socket: Pick<Socket, 'data'>): SessionScopedSocketBinding | null {
     const binding = (socket.data as { sessionScopedBinding?: unknown } | undefined)?.sessionScopedBinding;
     if (!binding || typeof binding !== "object") return null;
     const candidate = binding as Record<string, unknown>;

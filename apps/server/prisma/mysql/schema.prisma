@@ -41,6 +41,12 @@ model Account {
     settingsVersion Int         @default(0)
     encryptionMode  String      @default("e2ee")
     encryptionModeUpdatedAt DateTime @default(now())
+    /// Internal managed identities never inherit the administrator's account credentials.
+    managedRole     String      @default("unmanaged")
+    managedMachine  Machine?    @relation("ManagedMachineIdentity")
+    machineGrants   MachineGrant[]
+    managedInvites  ManagedAccountInvite[] @relation("ManagedInviteCreator")
+    redeemedInvites ManagedAccountInvite[] @relation("ManagedInviteConsumer")
 
     // Profile
     firstName String?
@@ -294,6 +300,9 @@ model Session {
     tag               String
     accountId         String
     account           Account             @relation(fields: [accountId], references: [id])
+    /// Server-verified resource binding; encrypted metadata is not an authorization input.
+    machineId         String?
+    machine           Machine?            @relation(fields: [machineId], references: [id])
     encryptionMode    String              @default("e2ee")
     metadata          String @db.LongText
     metadataVersion   Int                 @default(0)
@@ -389,6 +398,7 @@ model Session {
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
     @@unique([accountId, tag])
+    @@index([machineId])
     @@index([accountId, updatedAt])
     @@index([accountId, meaningfulActivityAt, id])
     // The attention read, exactly: `accountId = ? AND needsAttention = true` (equality on both) then
@@ -825,6 +835,11 @@ model Machine {
     id                 String      @id
     accountId          String
     account            Account     @relation(fields: [accountId], references: [id])
+    /// UNIQUE enforces a single machine even under concurrent identity registrations.
+    managedIdentityAccountId String? @unique
+    managedIdentityAccount Account? @relation("ManagedMachineIdentity", fields: [managedIdentityAccountId], references: [id])
+    grants             MachineGrant[]
+    sessions           Session[]
     metadata           String @db.LongText // Encrypted - contains static machine info
     metadataVersion    Int         @default(0)
     daemonState        String? @db.LongText // Encrypted - contains dynamic daemon state
@@ -855,6 +870,37 @@ model Machine {
     @@index([accountId, replacedByMachineId])
     @@index([accountId, replacedAt])
     @@index([accountId, revokedAt])
+}
+
+model MachineGrant {
+    machineId         String
+    machine           Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    accountId         String
+    account           Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    dataEncryptionKey Bytes?
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    @@id([machineId, accountId])
+    @@index([accountId])
+}
+
+model ManagedAccountInvite {
+    id                  String @id @default(cuid())
+    tokenHash           String @unique
+    kind                String
+    name                String?
+    machineIds          String @db.LongText @default(dbgenerated("('[]')"))
+    createdByAccountId  String
+    createdByAccount    Account @relation("ManagedInviteCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    consumedByAccountId String?
+    consumedByAccount   Account? @relation("ManagedInviteConsumer", fields: [consumedByAccountId], references: [id])
+    expiresAt           DateTime
+    revokedAt           DateTime?
+    consumedAt          DateTime?
+    createdAt           DateTime @default(now())
+
+    @@index([createdByAccountId, createdAt])
 }
 
 enum AutomationScheduleKind {

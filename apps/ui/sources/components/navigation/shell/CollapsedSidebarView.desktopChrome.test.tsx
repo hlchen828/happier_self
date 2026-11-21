@@ -17,13 +17,14 @@ const inboxState = vi.hoisted(() => ({
 }));
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+const platformState = vi.hoisted(() => ({ OS: 'web' as 'web' | 'android' | 'ios' }));
 
 installNavigationShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
+                get OS() { return platformState.OS; },
             },
         });
     },
@@ -73,6 +74,7 @@ vi.mock('@/utils/platform/tauri', () => ({
 
 describe('CollapsedSidebarView desktop chrome', () => {
     beforeEach(() => {
+        platformState.OS = 'web';
         collapsedSidebarState.setSidebarCollapsed.mockReset();
         native.invoke.mockReset();
         native.invoke.mockImplementation(async (command: string) => {
@@ -82,7 +84,8 @@ describe('CollapsedSidebarView desktop chrome', () => {
         });
     });
 
-    it('renders collapsed desktop chrome hosts and expands the sidebar', async () => {
+    it.each(['web', 'android', 'ios'] as const)('renders the collapsed sidebar and expands it on %s', async (platform) => {
+        platformState.OS = platform;
         const { CollapsedSidebarView } = await import('./CollapsedSidebarView');
         const screen = await renderScreen(
             <CollapsedSidebarView

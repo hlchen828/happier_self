@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 
 import type { PetCompanionTrayItem } from './petCompanionActivityTypes';
@@ -33,11 +33,11 @@ export function usePetCompanionTrayDismissals(): Readonly<{
         });
         applyLocalSettings({
             petsDismissedCompanionTrayItemKeys: appendDismissedPetCompanionTrayItemKey(
-                [...dismissedTrayItemKeys],
+                storage.getState().localSettings.petsDismissedCompanionTrayItemKeys,
                 item.dismissKey,
             ),
         });
-    }, [applyLocalSettings, dismissedTrayItemKeys]);
+    }, [applyLocalSettings]);
 
     return { dismissedTrayItemKeys, dismissTrayItem };
 }

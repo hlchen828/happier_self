@@ -126,6 +126,24 @@ describe('sessionScanner', () => {
     }
   })
 
+  it('retains explicit Skill instruction metadata across history replay and live ingestion', async () => {
+    const sessionId = '34343434-3434-4343-8343-343434343434'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const content = [{ type: 'text', text: 'Base directory for this skill: /test/skills/example\n\nInternal instructions' }]
+    const row = { type: 'user', uuid: 'skill-history', isMeta: true, isSidechain: false,
+      userType: 'external', sourceToolUseID: 'skill-tool', message: { role: 'user', content } }
+    await writeFile(sessionFile, JSON.stringify(row) + '\n')
+    scanner = await createSessionScanner({ sessionId, replayInitialMessages: true, workingDirectory: testDir,
+      onMessage: message => { collectedMessages.push(message) } })
+    expect(collectedMessages).toEqual([expect.objectContaining(row)])
+    const liveRow = { ...row, uuid: 'skill-live', isMeta: undefined, isSynthetic: true }
+    await appendFile(sessionFile, JSON.stringify(liveRow) + '\n')
+    await waitFor(() => collectedMessages.some(message => message.uuid === 'skill-live'))
+    expect(collectedMessages.find(message => message.uuid === 'skill-live')).toMatchObject({
+      isSynthetic: true, sourceToolUseID: 'skill-tool', message: { content },
+    })
+  })
+
   it('fences buffered rows from the prior follower after a trusted main-session rotation', async () => {
     const firstSessionId = '31313131-3131-4313-8313-313131313131'
     const rotatedSessionId = '32323232-3232-4323-8323-323232323232'

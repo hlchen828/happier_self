@@ -26,6 +26,7 @@ import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/s
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { looksLikeCurrentV2SessionNotFound404 } from '@/sync/engine/sessions/sessionHttpCompat';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type {
@@ -984,13 +985,30 @@ export async function sessionDeleteWithServerScope(
         if (response.ok || response.status === 404) {
             const body: unknown = await response.json().catch(() => null);
             if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-            // Released DELETE /v1/sessions/:id uses this authenticated absence result;
-            // an unrelated route/proxy 404 does not establish that the session is gone.
-            if (!response.ok && (
-                body === null || typeof body !== 'object'
-                || !('error' in body) || body.error !== 'Session not found or not owned by user'
-            )) {
-                return { success: false, message: 'Failed to delete session' };
+            if (!response.ok) {
+                if (body === null || typeof body !== 'object'
+                    || !('error' in body) || body.error !== 'Session not found or not owned by user') {
+                    return { success: false, message: 'Failed to delete session' };
+                }
+                // server-v0.2.20 returns this same DELETE 404 for an existing shared session.
+                // Only its canonical exact read can distinguish denied deletion from absence.
+                const absenceResponse = await runtimeFetchWithServerReachability({
+                    serverUrl: context.targetServerUrl,
+                    token: context.token,
+                    url: `${context.targetServerUrl}/v2/sessions/${encodeURIComponent(sessionId)}`,
+                    init: {
+                        method: 'GET',
+                        ...(opts?.signal ? { signal: opts.signal } : {}),
+                        headers: { Authorization: `Bearer ${context.token}` },
+                    },
+                    signal: opts?.signal,
+                });
+                const absenceBody: unknown = absenceResponse.status === 404
+                    ? await absenceResponse.json().catch(() => null) : null;
+                if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
+                if (absenceResponse.status !== 404 || !looksLikeCurrentV2SessionNotFound404(absenceBody)) {
+                    return { success: false, message: 'Failed to delete session' };
+                }
             }
             const currentCredentials = await TokenStorage.getCredentialsForServerUrl(context.targetServerUrl, {
                 serverId: context.targetServerId,

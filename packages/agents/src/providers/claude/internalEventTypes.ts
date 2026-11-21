@@ -25,3 +25,21 @@ const INTERNAL_CLAUDE_EVENT_TYPES = new Set<string>([
 export function isClaudeInternalEventType(type: unknown): boolean {
   return typeof type === 'string' && INTERNAL_CLAUDE_EVENT_TYPES.has(type);
 }
+
+/** Explicit metadata is internal; synthetic user content is internal only when it is text-only. */
+export function isClaudeInternalUserPrompt(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.type !== 'user') return false;
+  if (record.isMeta === true) return true;
+  if (record.isSynthetic !== true) return false;
+  const message = record.message;
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content === 'string') return true;
+  return Array.isArray(content) && content.length > 0 && content.every((block: unknown) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return false;
+    const item = block as Record<string, unknown>;
+    return item.type === 'text' && typeof item.text === 'string';
+  });
+}

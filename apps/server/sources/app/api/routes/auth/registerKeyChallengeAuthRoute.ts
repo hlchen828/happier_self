@@ -8,6 +8,9 @@ import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { type Fastify } from "../../types";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
+import { authenticateManagedAccount } from '@/app/account/managedAccounts/invitations';
+import { ManagedAccessError } from '@/app/account/managedAccounts/access';
 
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
     app.post('/v1/auth', {
@@ -17,7 +20,8 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                 challenge: z.string(),
                 signature: z.string(),
                 contentPublicKey: z.string().optional(),
-                contentPublicKeySig: z.string().optional()
+                contentPublicKeySig: z.string().optional(),
+                inviteToken: z.string().optional(),
             }).superRefine((value, ctx) => {
                 const hasContentKey = typeof value.contentPublicKey === 'string';
                 const hasContentSig = typeof value.contentPublicKeySig === 'string';
@@ -101,6 +105,18 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
 
         // Create or update user in database
         const publicKeyHex = privacyKit.encodeHex(publicKey);
+
+        if (configuredAdministratorPublicKey()) {
+            try {
+                const account = await authenticateManagedAccount({ publicKey: publicKeyHex, contentPublicKey, contentPublicKeySig, inviteToken: request.body.inviteToken });
+                const eligibility = await enforceLoginEligibility({ accountId: account.id, env: process.env });
+                if (!eligibility.ok) return reply.code(eligibility.statusCode).send({ error: eligibility.error });
+                return reply.send({ success: true, token: await auth.createToken(account.id) });
+            } catch (error) {
+                if (error instanceof ManagedAccessError) return reply.code(error.statusCode).send({ error: error.code });
+                throw error;
+            }
+        }
 
         const encryptionFeatureEnv = readEncryptionFeatureEnv(process.env);
         const effectiveDefaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(

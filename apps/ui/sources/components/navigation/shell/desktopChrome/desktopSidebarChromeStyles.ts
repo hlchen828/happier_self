@@ -18,6 +18,7 @@ import {
     DESKTOP_SIDEBAR_CHROME_WINDOW_CONTROLS_GAP_PX,
     DESKTOP_WINDOW_CONTROLS_SLOT_MIN_HEIGHT_PX,
     DESKTOP_WINDOW_CONTROLS_SLOT_MIN_WIDTH_PX,
+    SIDEBAR_TOGGLE_TOUCH_TARGET_SIZE_PX,
 } from './desktopChromeMetrics';
 
 export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
@@ -180,6 +181,11 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         opacity: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_OPACITY,
+    },
+    touchToggleButton: {
+        width: SIDEBAR_TOGGLE_TOUCH_TARGET_SIZE_PX,
+        height: SIDEBAR_TOGGLE_TOUCH_TARGET_SIZE_PX,
+        flexShrink: 0,
     },
     topIconButtonDisabled: {
         opacity: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_DISABLED_OPACITY,

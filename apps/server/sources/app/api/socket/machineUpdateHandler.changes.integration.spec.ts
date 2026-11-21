@@ -41,6 +41,7 @@ let machineRevokedAt: Date | null = null;
 let machineReplacedByMachineId: string | null = null;
 const txDbMocks = createDbMocks({
     machine: ["findFirst", "updateMany"],
+    session: ["findFirst"],
 } as const);
 
 installDbModuleMock(() => ({ db: txDbMocks.db }));
@@ -312,12 +313,40 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(handler).toEqual(expect.any(Function));
         if (!handler) return;
 
+        txDbMocks.db.session.findFirst.mockResolvedValue({ id: "sess-1" });
         await handler(payload);
 
         expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
             userId: "u1",
             payload,
             recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
+        }));
+    });
+
+    it("does not broadcast direct-session transcript deltas for sessions not bound to the socket's machine", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any);
+        const handler = socket.handlers.get("direct-session-transcript-delta");
+        expect(handler).toEqual(expect.any(Function));
+        if (!handler) return;
+
+        txDbMocks.db.session.findFirst.mockResolvedValue(null);
+        await handler({
+            type: "direct-session-transcript-delta",
+            sessionId: "other-machine-session",
+            items: [],
+            truncated: false,
+        });
+
+        expect(emitEphemeral).not.toHaveBeenCalled();
+        expect(txDbMocks.db.session.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: "other-machine-session", machineId: "m1" }),
         }));
     });
 

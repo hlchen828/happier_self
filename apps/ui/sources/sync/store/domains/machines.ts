@@ -151,6 +151,8 @@ function areMachineDisplaysEqual(
         && left.active === right.active
         && left.activeAt === right.activeAt
         && (left.revokedAt ?? null) === (right.revokedAt ?? null)
+        && left.managed === right.managed
+        && left.managedAccessStatus === right.managedAccessStatus
         && (left.replacedByMachineId ?? null) === (right.replacedByMachineId ?? null)
         && (left.replacedAt ?? null) === (right.replacedAt ?? null)
         && (left.replacementReason ?? null) === (right.replacementReason ?? null)
@@ -170,6 +172,8 @@ function areMachinesEqual(left: Machine | undefined, right: Machine | undefined)
         && left.active === right.active
         && left.activeAt === right.activeAt
         && (left.revokedAt ?? null) === (right.revokedAt ?? null)
+        && left.managed === right.managed
+        && left.managedAccessStatus === right.managedAccessStatus
         && (left.replacedByMachineId ?? null) === (right.replacedByMachineId ?? null)
         && (left.replacedAt ?? null) === (right.replacedAt ?? null)
         && (left.replacementReason ?? null) === (right.replacementReason ?? null)

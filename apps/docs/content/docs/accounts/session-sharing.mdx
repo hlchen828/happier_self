@@ -29,6 +29,12 @@ From a session's sharing screen, pick a person and give them one of three levels
 | **Can edit** | Send messages, and take part in session-wide things like the pending queue. |
 | **Can manage** | Everything above, plus manage the session's sharing — other people's shares and the public link. |
 
+<Callout type="info" title="Development-source session controls">
+With the updated app and relay, **Can manage** recipients can also stop, archive and permanently delete a shared session. The app stops a running session before archiving or deleting it, and deletion still requires confirmation. Older relays can reject shared-session deletion; a rejected request does not remove a session that is still accessible.
+
+These controls apply only to the shared session. They do not grant access to other sessions, the whole machine, or deployment account management. This extension has not been published in a stable or preview release.
+</Callout>
+
 ### Letting someone approve permissions
 
 Separately from the access level, a **Can edit** or **Can manage** recipient can be allowed to approve permission prompts: *"Allows this user to approve permission prompts and run tools on your machine."*

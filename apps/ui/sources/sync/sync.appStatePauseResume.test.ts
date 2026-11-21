@@ -11,14 +11,15 @@ const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (st
     return { remove: vi.fn(() => appStateHandlers.delete(handler)) };
 }));
 const isTauriDesktopState = vi.hoisted(() => ({ value: false }));
+const nativeAppState = vi.hoisted(() => ({ platform: 'web', currentState: 'active' }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                        Platform: { OS: 'web' },
+                        Platform: { get OS() { return nativeAppState.platform; } },
                         AppState: {
-                            currentState: 'active',
+                            get currentState() { return nativeAppState.currentState; },
                             addEventListener: appStateAddListener as any,
                         },
                     }
@@ -83,6 +84,8 @@ describe('sync AppState pause/resume', () => {
         invalidateAllServerReachabilitySupervisorsMock.mockClear();
         stopServerReachabilitySupervisorsMock.mockClear();
         isTauriDesktopState.value = false;
+        nativeAppState.platform = 'web';
+        nativeAppState.currentState = 'active';
     });
 
     it('rearms only current-scope durable outbox sessions once without mounting a session route', async () => {
@@ -262,6 +265,29 @@ describe('sync AppState pause/resume', () => {
         expect(apiSocketConnect).toHaveBeenCalledTimes(1);
         expect(invalidateAllServerReachabilitySupervisorsMock).toHaveBeenCalledTimes(1);
         expect(pauseController.isPaused()).toBe(false);
+    });
+
+    it('keeps Android service sync active in background and pauses immediately when the service stops', async () => {
+        nativeAppState.platform = 'android';
+        const { Encryption } = await import('./encryption/encryption');
+        const quiescent = vi.spyOn(Encryption, 'markNativeCryptoWorkerQueueQuiescent');
+        vi.spyOn(Encryption, 'markNativeCryptoWorkerQueueActive').mockResolvedValue();
+        const { sync } = await import('./sync');
+        const { setBackgroundSyncServiceRunning } = await import('./runtime/connectivity/backgroundSyncService');
+        const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+        const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+        setBackgroundSyncServiceRunning(true);
+        nativeAppState.currentState = 'background';
+        Array.from(appStateHandlers)[0]!('background');
+        expect(pauseController.isPaused()).toBe(false);
+        expect(apiSocketDisconnect).not.toHaveBeenCalled();
+        expect(isServerReachabilityNetworkAllowed()).toBe(true);
+        expect(quiescent).not.toHaveBeenCalled();
+        setBackgroundSyncServiceRunning(false);
+        expect(pauseController.isPaused()).toBe(true);
+        expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+        expect(isServerReachabilityNetworkAllowed()).toBe(false);
+        expect(quiescent).toHaveBeenCalledTimes(1);
     });
 
     it('keeps Tauri desktop sync active when AppState reports background', async () => {

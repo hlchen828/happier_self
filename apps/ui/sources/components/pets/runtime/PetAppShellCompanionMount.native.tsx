@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
     Pressable,
+    Platform,
     View,
     useWindowDimensions,
     type GestureResponderEvent,
@@ -41,6 +42,11 @@ import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPa
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 import { PetCompanionActivityTray } from '@/components/pets/tray/PetCompanionActivityTray';
 import { shouldAnimateNativePetCompanionFrame } from './nativePetFrameAnimationPolicy';
+import { getAndroidPetOverlayState, subscribeAndroidPetOverlay } from '@/components/pets/android/androidPetOverlay';
+
+function isAndroidSystemPetVisible(): boolean {
+    return Platform.OS === 'android' && getAndroidPetOverlayState().running;
+}
 import {
     PET_COMPANION_POSITION_DEFAULT_MARGIN_PT,
     createStoredPetCompanionPosition,
@@ -278,8 +284,9 @@ const NativePetCompanionInteractiveLayer = React.memo(function NativePetCompanio
 
 function NativePetCompanionLayer(): React.ReactElement | null {
     const selectedPetPackage = useSelectedPetPackage();
+    const systemPetVisible = React.useSyncExternalStore(subscribeAndroidPetOverlay, isAndroidSystemPetVisible);
 
-    if (!selectedPetPackage.enabled || !selectedPetPackage.source) {
+    if (systemPetVisible || !selectedPetPackage.enabled || !selectedPetPackage.source) {
         return null;
     }
 

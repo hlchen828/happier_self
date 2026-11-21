@@ -183,7 +183,9 @@ function areMachineDisplayCacheEntriesEqual(
     previousEntry: MachineDisplayCacheEntryV1,
 ): boolean {
     return (
-        nextEntry.metadataVersion === previousEntry.metadataVersion
+        nextEntry.managed === previousEntry.managed
+        && nextEntry.managedAccessStatus === previousEntry.managedAccessStatus
+        && nextEntry.metadataVersion === previousEntry.metadataVersion
         && nextEntry.updatedAt === previousEntry.updatedAt
         && nextEntry.active === previousEntry.active
         && nextEntry.activeAt === previousEntry.activeAt
@@ -456,12 +458,14 @@ function buildSessionListCacheEntries(
 export function buildMachineDisplayRenderableFromCacheEntry(entry: MachineDisplayCacheEntryV1): MachineDisplayRenderable {
     return {
         id: entry.machineId,
+        managed: entry.managed,
+        managedAccessStatus: entry.managedAccessStatus,
         updatedAt: entry.updatedAt,
         active: entry.active,
         activeAt: entry.activeAt,
         revokedAt: entry.revokedAt,
         metadataVersion: entry.metadataVersion,
-        metadata: {
+        metadata: entry.managedAccessStatus === 'pending' ? null : {
             displayName: entry.displayName ?? null,
             host: entry.host ?? null,
             homeDir: entry.homeDir ?? null,
@@ -473,7 +477,7 @@ function shouldPreserveMachineDisplayMetadataFromPreviousEntry(
     machine: MachineDisplayRenderable,
     previousEntry: MachineDisplayCacheEntryV1 | undefined,
 ): previousEntry is MachineDisplayCacheEntryV1 {
-    return machine.metadata == null && Boolean(previousEntry);
+    return machine.managedAccessStatus !== 'pending' && machine.metadata == null && Boolean(previousEntry);
 }
 
 export function buildMachineDisplayCacheEntryFromRenderable(
@@ -484,6 +488,8 @@ export function buildMachineDisplayCacheEntryFromRenderable(
 
     const nextEntry: MachineDisplayCacheEntryV1 = {
         machineId: machine.id,
+        managed: machine.managed,
+        managedAccessStatus: machine.managedAccessStatus,
         metadataVersion: preserveMetadata ? previousEntry.metadataVersion : machine.metadataVersion,
         updatedAt: machine.updatedAt,
         active: machine.active,

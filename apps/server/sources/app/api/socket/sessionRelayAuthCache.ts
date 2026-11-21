@@ -1,4 +1,5 @@
 import type { Socket } from "socket.io";
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
 
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
@@ -96,7 +97,9 @@ export async function authorizeSessionScopedMachineBinding(params: Readonly<{
     const nowMs = Date.now();
     const cached = relayAuthCache.get(cacheKey);
     if (cached && cached.validUntil > nowMs) {
-        return cached.participantUserIds;
+        // Managed grants have immediate revocation semantics across adapter workers. Keep the
+        // stable publisher binding cache, but never authorize recipients from a TTL snapshot.
+        return configuredAdministratorPublicKey() ? await getSessionParticipantUserIds({ sessionId: params.sessionId }) : cached.participantUserIds;
     }
     pruneExpiredRelayAuthEntries(nowMs);
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Retain the native overlay's disconnected circle-slash without a font-dependent glyph. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="14dp" android:height="14dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="@android:color/transparent" android:strokeColor="@android:color/black"
+        android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M12,3A9,9 0,1 1,12 21A9,9 0,1 1,12 3M5.6,5.6L18.4,18.4" />
+</vector>

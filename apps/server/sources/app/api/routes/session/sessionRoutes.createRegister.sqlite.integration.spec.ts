@@ -10,6 +10,7 @@ import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherP
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
+import { authorizeSessionScopedMachineBinding } from "../../socket/sessionRelayAuthCache";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { sessionRoutes } from "./sessionRoutes";
 
@@ -162,6 +163,58 @@ describe("session create/load before publisher registration (SQLite integration)
             })],
         });
     }, 120_000);
+
+    it("authorizes shared admins for archive and HTTP deletion without widening view, edit or revoked access", async () => {
+        const app = createTestApp();
+        const accounts = await Promise.all(["owner", "admin", "view", "edit", "revoked", "outsider"].map(async (role) => {
+            const account = await db.account.create({ data: { publicKey: `${role}-${randomUUID()}` } });
+            return { ...account, headers: { authorization: `Bearer ${await auth.createToken(account.id)}` } };
+        }));
+        const [owner, admin, viewer, editor, revoked, outsider] = accounts;
+        const created = await app.inject({ method: "POST", url: "/v1/sessions", headers: owner.headers,
+            payload: { tag: randomUUID(), metadata: "{}", encryptionMode: "e2ee" } });
+        expect(created.statusCode).toBe(200);
+        const createdBody: { session: { id: string } } = created.json();
+        const sessionId = createdBody.session.id;
+        for (const [recipient, accessLevel] of [[admin, "admin"], [viewer, "view"], [editor, "edit"], [revoked, "admin"]] as const) {
+            await db.sessionShare.create({ data: { sessionId, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel } });
+        }
+        await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: { sessionId, sharedWithUserId: revoked.id } } });
+        const beforeDenials = await db.accountChange.findMany();
+        for (const recipient of [viewer, editor, revoked, outsider]) {
+            expect((await app.inject({ method: "POST", url: `/v2/sessions/${sessionId}/archive`, headers: recipient.headers })).statusCode).toBe(403);
+            expect((await app.inject({ method: "DELETE", url: `/v1/sessions/${sessionId}`, headers: recipient.headers })).statusCode).toBe(404);
+        }
+        expect((await app.inject({ method: "DELETE", url: `/v1/sessions/missing-${randomUUID()}`, headers: admin.headers })).statusCode).toBe(404);
+        expect(await db.accountChange.findMany()).toEqual(beforeDenials);
+        expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({ archivedAt: null });
+
+        const machineId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: owner.id, metadata: "{}" } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId, sessionId, data: "encrypted-binding" } });
+        const binding = { accountId: owner.id, machineId, sessionId };
+        expect((await authorizeSessionScopedMachineBinding(binding))?.slice().sort()).toEqual([owner.id, admin.id, viewer.id, editor.id].sort());
+        const archived = await app.inject({ method: "POST", url: `/v2/sessions/${sessionId}/archive`, headers: admin.headers });
+        expect(archived.statusCode).toBe(200);
+        expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({ archivedAt: expect.any(Date) });
+        expect((await app.inject({ method: "POST", url: `/v2/sessions/${sessionId}/unarchive`, headers: admin.headers })).statusCode).toBe(200);
+        const beforeDelete = await db.accountChange.findMany({ where: { kind: "session", entityId: sessionId } });
+        const deleted = await app.inject({ method: "DELETE", url: `/v1/sessions/${sessionId}`, headers: admin.headers });
+        expect(deleted.statusCode, deleted.body).toBe(200);
+        expect(deleted.json()).toEqual({ success: true });
+        expect(await db.session.findUnique({ where: { id: sessionId } })).toBeNull();
+        expect(await db.sessionShare.count({ where: { sessionId } })).toBe(0);
+        expect(await db.accessKey.count({ where: { sessionId } })).toBe(0);
+        expect(await authorizeSessionScopedMachineBinding(binding)).toBeNull();
+        const changes = await db.accountChange.findMany({ where: { kind: "session", entityId: sessionId } });
+        expect(changes.map((change) => change.accountId).sort()).toEqual([owner.id, admin.id, viewer.id, editor.id].sort());
+        for (const change of changes) {
+            expect(change.cursor).toBeGreaterThan(beforeDelete.find((previous) => previous.accountId === change.accountId)!.cursor);
+        }
+        expect((await app.inject({ method: "DELETE", url: `/v1/sessions/${sessionId}`, headers: admin.headers })).statusCode).toBe(404);
+        const owned = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
+        expect((await app.inject({ method: "DELETE", url: `/v1/sessions/${owned.id}`, headers: owner.headers })).statusCode).toBe(200);
+    });
 
     it("clears archive intent on load without asserting reachability or replacing the publisher fence", async () => {
         const app = createTestApp();

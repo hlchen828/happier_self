@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <application>
+    <service
+      android:name="dev.happier.petoverlay.PetOverlayService"
+      android:exported="false"
+      android:stopWithTask="true"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="User-started draggable companion overlay with persistent encrypted task-state synchronization through the existing app runtime; no separate runtime or synchronization engine; stops when the task is removed." />
+    </service>
+  </application>
+</manifest>

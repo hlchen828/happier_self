@@ -6,7 +6,9 @@ import { db } from "@/storage/db";
 import { Socket } from "socket.io";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markMachineParticipantsChanged } from '@/app/account/managedAccounts/machineParticipants';
+import { managedMachineAccess } from '@/app/account/managedAccounts/access';
+import { configuredAdministratorPublicKey } from '@/app/account/managedAccounts/policy';
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import {
     ActionOperationRevisionEphemeralV1Schema,
@@ -146,6 +148,16 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
+            // The server owns the machine–session relation: a machine daemon must only
+            // emit transcript deltas for sessions bound to the machine it authenticated as.
+            const owned = await db.session.findFirst({
+                where: { id: parsed.data.sessionId, machineId, accountId: userId },
+                select: { id: true },
+            });
+            if (!owned) {
+                return;
+            }
+
             eventRouter.emitEphemeral({
                 userId,
                 payload: parsed.data,
@@ -206,10 +218,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
             const machineId = target.machineId;
+            const access = configuredAdministratorPublicKey() ? await managedMachineAccess(userId, machineId) : null;
+            if (configuredAdministratorPublicKey() && (!access || access.status !== 'ready')) { callback?.({ result: 'error', message: 'Machine not found' }); return; }
+            const machineOwnerId = access?.machine.accountId ?? userId;
 
             await inTx(async (tx) => {
+                if (access && !await managedMachineAccess(userId, machineId, tx)) { afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' })); return null; }
                 const machine = await tx.machine.findFirst({
-                    where: { accountId: userId, id: machineId },
+                    where: { accountId: machineOwnerId, id: machineId },
                     select: { metadataVersion: true, metadata: true, dataEncryptionKey: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
@@ -235,13 +251,13 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
+                    where: { accountId: machineOwnerId, id: machineId, metadataVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
                     data: { metadata, metadataVersion: expectedVersion + 1 },
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
-                        where: { accountId: userId, id: machineId },
+                        where: { accountId: machineOwnerId, id: machineId },
                         select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
                     });
                     if (fresh?.revokedAt) {
@@ -260,15 +276,13 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     return null;
                 }
 
-                const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: machineId });
+                const participantCursors = await markMachineParticipantsChanged(tx, machineOwnerId, machineId);
                 const metadataUpdate = { value: metadata, version: expectedVersion + 1 };
                 afterTx(tx, () => {
-                    const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), metadataUpdate);
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: updatePayload,
-                        recipientFilter: { type: 'machine-scoped-only', machineId }
-                    });
+                    for (const { accountId, cursor } of participantCursors) {
+                        const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), metadataUpdate);
+                        eventRouter.emitUpdate({ userId: accountId, payload: updatePayload, recipientFilter: accountId === machineOwnerId ? { type: 'machine-scoped-only', machineId } : { type: 'user-scoped-only' } });
+                    }
                     callback?.({ result: 'success', version: expectedVersion + 1, metadata });
                 });
                 return null;
@@ -305,6 +319,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
             const machineId = authenticatedMachineId;
+            const machineOwnerId = userId;
 
             // Validate input
             if (typeof daemonState !== 'string' || typeof expectedVersion !== 'number') {
@@ -316,7 +331,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
 
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
-                    where: { accountId: userId, id: machineId },
+                    where: { accountId: machineOwnerId, id: machineId },
                     select: { daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
@@ -342,7 +357,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
+                    where: { accountId: machineOwnerId, id: machineId, daemonStateVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
@@ -353,7 +368,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
-                        where: { accountId: userId, id: machineId },
+                        where: { accountId: machineOwnerId, id: machineId },
                         select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
                     });
                     if (fresh?.revokedAt) {
@@ -368,15 +383,13 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     return null;
                 }
 
-                const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: machineId });
+                const participantCursors = await markMachineParticipantsChanged(tx, machineOwnerId, machineId);
                 const daemonStateUpdate = { value: daemonState, version: expectedVersion + 1 };
                 afterTx(tx, () => {
-                    const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), undefined, daemonStateUpdate);
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: updatePayload,
-                        recipientFilter: { type: 'machine-scoped-only', machineId }
-                    });
+                    for (const { accountId, cursor } of participantCursors) {
+                        const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), undefined, daemonStateUpdate);
+                        eventRouter.emitUpdate({ userId: accountId, payload: updatePayload, recipientFilter: accountId === machineOwnerId ? { type: 'machine-scoped-only', machineId } : { type: 'user-scoped-only' } });
+                    }
                     callback?.({ result: 'success', version: expectedVersion + 1, daemonState });
                 });
                 return null;

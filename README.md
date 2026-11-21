@@ -332,7 +332,152 @@ happier relay host install --mode system
 
 This installs and updates a managed relay service on the current machine. For a remote host: `happier relay host install --ssh user@host --mode system`.
 
-The [self-hosting docs](https://docs.happier.dev/self-hosting/self-host-runtime) (also reachable at [happier.dev/self-host](https://happier.dev/self-host)) cover the details, with [Docker](https://docs.happier.dev/self-hosting/docker) and [Proxmox](https://docs.happier.dev/self-hosting/proxmox) as alternatives.
+The [self-hosting docs](https://docs.happier.dev/self-hosting/self-host-runtime) (also reachable at [happier.dev/self-host](https://happier.dev/self-host)) cover the details, with [Docker](https://docs.happier.dev/self-hosting/docker) and [Proxmox](https://happier.dev/self-hosting/proxmox) as alternatives.
+
+## Sub-accounts and managed machines
+
+A self-hosted relay can hand *specific machines* to a sub-account instead of the whole
+account. The administrator preauthorizes machines on the invitation; the sub-account
+sees only those machines and can run sessions on them. Nothing on the machine is a copy
+of the administrator's credentials.
+
+### Before you start
+
+- The relay must advertise `accounts.machineAccess` and `accounts.inviteMachineAssignment`
+  (`curl -s https://your-relay/v1/features`). Both turn on automatically once the relay is
+  configured with an administrator public key.
+- **Only managed machines can be preassigned.** A machine still using pre-managed (legacy)
+  credentials has no independent identity, so it never appears in the invitation picker.
+  Enroll it first, as described in option B below.
+- The CLI must be a build that includes managed machine access. Check it before relying on
+  it — `happier auth enroll` with no arguments must answer
+  `A machine invitation is required: ...`, not an unknown-command error.
+
+### Enroll a new machine
+
+1. As the administrator, open **Settings → Managed accounts → Invite**, pick
+   **Machine invitation**, set an expiry and create it. The token is shown once.
+2. On the target machine, enroll into a dedicated home so nothing existing is touched:
+
+   ```bash
+   HAPPIER_HOME_DIR=~/.happier-managed happier auth enroll \
+     --server-url https://your-relay --persist --invite '<token>'
+   ```
+
+   Expected output: `Machine identity enrolled. Start the daemon to register this machine.`
+3. Start the daemon from that same home:
+
+   ```bash
+   HAPPIER_HOME_DIR=~/.happier-managed happier daemon start
+   ```
+
+   Registration happens here. Until the daemon connects, the machine does not exist in
+   the picker, so an enrollment without a running daemon looks like nothing happened.
+4. Back in **Settings → Managed accounts → Invite**, create a **Member invitation**, open
+   **Invite machines**, select the machine, create the invitation and send the token to
+   the sub-account.
+5. The sub-account opens `https://your-relay/join`, redeems the token and finds the
+   machine under **Settings → Machines**. While the machine's daemon is online the entry
+   goes from *Waiting for encryption keys* to ready within seconds; while it is offline it
+   stays pending and fills in when it reconnects. Neither side needs a restart.
+
+#### One command instead of steps 2–3
+
+[`scripts/self-host/enroll-managed-machine.sh`](scripts/self-host/enroll-managed-machine.sh)
+does the same work on macOS and Linux: it resolves a Node runtime, installs the CLI payload
+into a private directory, checks that the build supports managed enrollment, enrolls into a
+dedicated home, and starts the daemon.
+
+```bash
+HAPPIER_MACHINE_INVITE='<token>' \
+  ./enroll-managed-machine.sh --relay https://your-relay \
+  --cli-tarball https://your-host/happier-cli-managed.tgz \
+  --cli-tarball-sha256 '<sha256>'
+```
+
+- `--cli-tarball` is a `tar.gz` of the build's `dist/`, `bin/` and `scripts/`. Any static host
+  works — the relay can serve it, or you can point at a file path. Without it the script uses
+  a payload already installed in `--cli-dir`.
+- `--cli-tarball-sha256 <hex>` pins the payload. Use it whenever the tarball is fetched over
+  the network, so a tampered or truncated download fails before anything is extracted.
+- The dependency closure comes from npm by default (`--deps-from-npm`, pinned through
+  `--npm-cli-version`); `--deps-from <dir-or-user@host:path>` reuses an existing
+  `node_modules` instead, which is what an air-gapped host needs.
+- The token is read from `HAPPIER_MACHINE_INVITE` or prompted for, so it never appears in
+  the process list. `--invite` exists for automation and is less private.
+- `--service` requests a launchd/systemd user service. On macOS this is login startup,
+  not startup before anyone signs in. An existing service owned by another Happier home can
+  block installation; do not remove or replace it to make the installer proceed.
+- `--check` runs the environment and payload checks and exits without touching the account.
+- Re-running the script leaves an already-enrolled home alone and ensures the daemon is
+  running. Installing a service is a separate step and can fail; check the command's exit
+  status and the actual service state.
+
+### A machine that already runs the old CLI
+
+Existing installations keep working. You choose whether that machine can also be shared:
+
+**A. Leave it exactly as it is.** The current daemon keeps running with its current
+credentials and nothing is migrated. The machine stays private to the administrator,
+because a legacy machine has no per-machine identity and therefore cannot be listed in an
+invitation. Choose this when the machine should not be shared.
+
+**B. Add a managed identity next to it.** The old setup stays untouched; the managed
+identity lives beside it in its own home:
+
+1. Create a **Machine invitation** as above.
+2. Enroll into a dedicated home — never the default one. `auth enroll` refuses to run when
+   the target home already has credentials, and that refusal is what protects the old
+   identity:
+
+   ```bash
+   HAPPIER_HOME_DIR=~/.happier-managed happier auth enroll \
+     --server-url https://your-relay --persist --invite '<token>'
+   HAPPIER_HOME_DIR=~/.happier-managed happier daemon start
+   ```
+
+3. Both daemons now run side by side. They use separate homes, control ports and state
+   files, and daemon ownership is scoped per installation, so neither replaces the other.
+   Confirm with `ps` plus `HAPPIER_HOME_DIR=... happier daemon status` under each home.
+4. The machine appears in the invitation picker from then on.
+
+For long-term use, check the managed build's `happier daemon service list` and preview
+`happier daemon service install --dry-run` with the dedicated `HAPPIER_HOME_DIR` before
+installing automatic startup. A manually running daemon may need an explicit takeover,
+and a service owned by another Happier home can block installation even with a different
+instance label. Do not remove, overwrite or take over the old home's service.
+
+On macOS, a LaunchAgent starts when its user logs in; it does not provide unattended
+startup before login. If `gui/<uid>` is unavailable in the current SSH session, immediate
+activation is blocked. A service file alone is not proof of a running service: confirm the
+launchd PID matches the managed daemon's state and that it reconnects to the relay. This
+installer does not provide a separate service-manager bypass for coexisting homes.
+
+### What a managed machine stores
+
+Only its own material: `servers/<relay>/auth/machine-identity.key` (a 32-byte signing
+seed created exclusively, `0600`), `servers/<relay>/access.key` (its own machine token,
+content public key and machine key, `0600`), plus daemon state, logs and caches. It holds
+no administrator credential, no sub-account credential, no other machine's key, and no
+plaintext content key. The machine's data key is generated locally when it first registers
+and reused afterwards; it leaves the machine only as an envelope sealed for each
+authorized recipient, and only that envelope is stored on the relay.
+
+### Common errors
+
+| Message | Cause |
+| --- | --- |
+| `This relay already has local credentials. Use a separate HAPPIER_HOME_DIR ...` | You pointed enrollment at a home that is already signed in. Use a dedicated home; do not delete the existing credentials. |
+| `This relay does not support managed-machine invitations.` | The relay does not advertise `accounts.machineAccess`, usually because no administrator public key is configured. |
+| `This invitation did not enroll a machine identity.` | The token was a member invitation. Create a **Machine invitation** instead. |
+| `Cannot find module .../scripts/...` | The CLI tree is incomplete. Copy the whole package (`bin`, `dist`, `scripts`, `node_modules`), not just `dist`. |
+
+### Security note
+
+A managed daemon runs as the OS user that started it, and sessions it hosts run as that
+user. Authorizing a machine therefore grants the sub-account code execution as that user.
+Do not share a machine that runs your relay, your production database, or holds other
+credentials — put shared work on a dedicated machine or a dedicated OS user instead.
 
 ## Security
 

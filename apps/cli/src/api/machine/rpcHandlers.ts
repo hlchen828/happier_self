@@ -652,6 +652,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       const created = await createSpawnedSession({
         credentials,
         directory: args.directory,
+        machineId: params.machineId,
         backendTarget: args.backendTarget,
         ...(connectedServices.success ? { connectedServices: connectedServices.data } : {}),
         ...(args.spawnNonce ? { spawnNonce: args.spawnNonce } : {}),
@@ -692,8 +693,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       });
       return {
         type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Failed to create a new session from the requested source',
+        errorCode: failure.creationErrorCode,
+        errorMessage: failure.errorMessage,
       };
     }
   };
@@ -1430,6 +1431,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       const created = await createSpawnedSession({
         credentials,
         directory: normalizedDirectory,
+        machineId: params.machineId,
         backendTarget: { kind: 'builtInAgent', agentId: agent },
         ...(typeof approvedNewDirectoryCreation === 'boolean' ? { approvedNewDirectoryCreation } : {}),
         ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
@@ -1475,8 +1477,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       });
       return {
         type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Failed to create a new session for replay',
+        errorCode: failure.creationErrorCode,
+        errorMessage: failure.errorMessage,
       };
     }
   });
@@ -2036,6 +2038,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       const created = await createSpawnedSession({
         credentials,
         directory: normalizedDirectory,
+        machineId: params.machineId,
         backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
         approvedNewDirectoryCreation: true,
         spawnNonce: `${baseSpawnNonce}:replay`,
@@ -2091,8 +2094,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       });
       return {
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-        errorMessage: 'Failed to create fork session',
+        errorCode: failure.errorCode,
+        errorMessage: failure.errorMessage,
       };
     }
 

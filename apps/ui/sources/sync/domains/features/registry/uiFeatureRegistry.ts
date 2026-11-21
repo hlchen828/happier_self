@@ -23,6 +23,14 @@ export type UiFeatureDefinition = Readonly<{
 }>;
 
 export const UI_FEATURE_REGISTRY = {
+    'accounts.machineAccess': {
+        settingsToggle: undefined,
+        analytics: { trackPreference: false, trackEffective: false },
+    },
+    'accounts.inviteMachineAssignment': {
+        settingsToggle: undefined,
+        analytics: { trackPreference: false, trackEffective: false },
+    },
     automations: {
         settingsToggle: {
             showInSettings: true,

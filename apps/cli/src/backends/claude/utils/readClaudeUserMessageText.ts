@@ -1,10 +1,11 @@
+import { providers } from '@happier-dev/agents';
 import { readClaudePeerMessage } from '@happier-dev/protocol';
 
 import type { RawJSONLines } from '@/backends/claude/types';
 
 /** Read human prompts without flattening tool results, media, or peer provenance. */
 export function readClaudeUserMessageText(body: RawJSONLines): string | null {
-    if (body.type !== 'user' || body.isSidechain === true || body.isMeta === true || readClaudePeerMessage(body)) {
+    if (body.type !== 'user' || body.isSidechain === true || providers.claude.isClaudeInternalUserPrompt(body) || readClaudePeerMessage(body)) {
         return null;
     }
 

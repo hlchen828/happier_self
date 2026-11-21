@@ -26,6 +26,9 @@ function renderMachineSubtitle(params: Readonly<{
     serverId: string;
     textSecondaryColor: string;
 }>): React.ReactNode {
+    if (params.machine.managedAccessStatus === 'pending') {
+        return <Text style={{ color: params.textSecondaryColor }}>{t('managedAccounts.awaitingKeys')}</Text>;
+    }
     const isOnline = isMachineOnline(params.machine);
     const host = params.machine.metadata?.host || 'Unknown';
     const displayName = params.machine.metadata?.displayName;
@@ -111,6 +114,7 @@ export const ActiveSelectionMachinesSection = React.memo(function ActiveSelectio
                                 return (
                                     <Item
                                         key={`machine-${group.serverId}-${machine.id}`}
+                                        testID={`machine-settings-${machine.id}`}
                                         title={title}
                                         subtitle={renderMachineSubtitle({
                                             machine,
@@ -143,6 +147,7 @@ export const ActiveSelectionMachinesSection = React.memo(function ActiveSelectio
                         return (
                             <Item
                                 key={machine.id}
+                                testID={`machine-settings-${machine.id}`}
                                 title={title}
                                 subtitle={renderMachineSubtitle({
                                     machine,

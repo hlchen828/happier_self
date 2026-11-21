@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SDKToLogConverter } from './sdkToLogConverter';
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import { asRecord, conversionContext } from './sdkToLogConverter.testkit';
+import { readClaudeUserMessageText } from './readClaudeUserMessageText';
 
 describe('SDKToLogConverter core conversion', () => {
   let converter: SDKToLogConverter;
@@ -41,6 +42,49 @@ describe('SDKToLogConverter core conversion', () => {
       });
       expect(logMessage?.uuid).toBeTruthy();
       expect(logMessage?.timestamp).toBeTruthy();
+    });
+
+    describe.each([
+      { isMeta: true },
+      { isSynthetic: true },
+    ])('internal user prompts (%j)', (flags) => {
+      it.each(['string', 'text-blocks'] as const)('keeps %s Skill instructions out of human prompts', (format) => {
+        const text = 'Base directory for this skill: /test/skills/example\n\nInternal skill instructions';
+        const content = format === 'string' ? text : [{ type: 'text', text }];
+        const sdkMessage: SDKUserMessage = {
+          type: 'user',
+          ...flags,
+          message: { role: 'user', content },
+        };
+
+        const logMessage = converter.convert(sdkMessage);
+        if (!logMessage || logMessage.type !== 'user') throw new Error('Expected user log message');
+
+        expect(readClaudeUserMessageText(logMessage)).toBeNull();
+        expect(logMessage).toMatchObject({ isMeta: true, message: { content } });
+      });
+    });
+
+    it.each([undefined, false])('keeps unmarked Skill-like user text visible (isSynthetic=%s)', (isSynthetic) => {
+      const text = 'Base directory for this skill: /test/skills/example\n\nPlease explain these instructions';
+      const logMessage = converter.convert({
+        type: 'user',
+        isSynthetic,
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      });
+      if (!logMessage || logMessage.type !== 'user') throw new Error('Expected user log message');
+
+      expect(readClaudeUserMessageText(logMessage)).toBe(text);
+      expect(logMessage.isMeta).not.toBe(true);
+    });
+
+    it.each(['image', 'document'])('retains synthetic %s content without marking it as an internal prompt', (type) => {
+      const content = [{ type, source: { type: 'base64', data: 'media' } }, { type: 'text', text: 'Caption' }];
+      const logMessage = converter.convert({ type: 'user', isSynthetic: true, message: { role: 'user', content } });
+      expect(logMessage).toMatchObject({ type: 'user', message: { content } });
+      expect(logMessage?.isMeta).not.toBe(true);
+      if (!logMessage) throw new Error('Expected media log message');
+      expect(readClaudeUserMessageText(logMessage)).toBeNull();
     });
 
     it('handles user message with complex content', () => {

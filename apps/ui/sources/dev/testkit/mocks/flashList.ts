@@ -44,6 +44,8 @@ function renderListComponent(
     };
     const header = renderAuxiliaryComponent(props.ListHeaderComponent);
     const footer = renderAuxiliaryComponent(props.ListFooterComponent);
+    const empty = Array.isArray(props.data) && props.data.length === 0
+        ? renderAuxiliaryComponent(props.ListEmptyComponent) : null;
     const items = options.renderItems === false
         ? []
         : Array.isArray(props.data)
@@ -60,7 +62,7 @@ function renderListComponent(
             })
             : [];
 
-    return React.createElement(options.componentName, props, header, ...items, footer);
+    return React.createElement(options.componentName, props, header, ...items, ...(empty ? [empty] : []), footer);
 }
 
 export function createCapturingFlashListMock(

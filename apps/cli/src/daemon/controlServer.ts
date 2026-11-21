@@ -2067,7 +2067,7 @@ export function createDaemonControlApp({
           modelUpdatedAt: request.body.modelUpdatedAt,
           replay: request.body.replay,
         },
-        { spawnSession },
+        { spawnSession, machineId },
       );
     } catch (error) {
       const authStatus = readAuthenticationStatus(error);

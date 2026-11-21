@@ -117,7 +117,13 @@ function generateProviderSchemaFromPostgres(
         // index cannot fit within MySQL's InnoDB key-size limit.
         body = body.replace(/^\s*@@unique\(\[accountId, providerId, accountSubjectId, quotaScope, quotaScopeIdKey\], map: "paur_identity_key"\)\s*$/m, "");
 
-	        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
+        // Invitation target sets must survive device removal without truncation. MySQL requires
+        // TEXT defaults to be expressions; a literal Prisma default renders invalid MySQL DDL.
+        body = body.replace(/^model ManagedAccountInvite\s*\{[\s\S]*?^\}/m, (model) => model
+            .replace(/^(\s*machineIds\s+String\b)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*machineIds\s+String\b[^\n]*?)@default\("\[\]"\)/m, "$1@default(dbgenerated(\"('[]')\"))"));
+
+        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
 	        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");

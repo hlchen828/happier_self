@@ -18,6 +18,10 @@ import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAcco
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 import { attachRelayMachineRpcTap, RELAY_FORWARD_TIMEOUT_ACK } from '../../src/testkit/uiE2e/desktopSetup/relayMachineRpcTap';
+import { createTestAuth } from '../../src/testkit/auth';
+import { fetchJson } from '../../src/testkit/http';
+import { addFriend, fetchAccountId, setUsername } from '../../src/testkit/socialFriends';
+import { createPlainSession } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -58,6 +62,10 @@ test.describe('ui e2e: session action rail', () => {
         HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
         HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: '1',
+        HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '1',
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: '1',
+        HAPPIER_ADMIN_PUBLIC_KEY: '',
         HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
       },
     });
@@ -84,6 +92,145 @@ test.describe('ui e2e: session action rail', () => {
     await daemon?.stop().catch(() => {});
     await ui?.stop().catch(() => {});
     await server?.stop().catch(() => {});
+  });
+
+  test('hides internal Skill instructions while retaining the tool card and real user text after reload', async ({ page }, testInfo) => {
+    test.setTimeout(240_000);
+    if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const authResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/auth' && response.ok());
+      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await waitForInitialAppUi({ page, browserDiagnostics });
+      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+      const authBody: unknown = await (await authResponse).json();
+      if (!authBody || typeof authBody !== 'object' || !('token' in authBody) || typeof authBody.token !== 'string') {
+        throw new Error('missing transcript fixture authentication');
+      }
+      const token = authBody.token;
+      const sessionId = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Skill transcript fixture',
+        rootPath: '/skill-transcript-fixture', machineId: 'skill-transcript-fixture', tagPrefix: 'skill-transcript' });
+      const instructions = 'Base directory for this skill: /test/skills/example\n\nSkill instruction quotation';
+      const post = async (localId: string, value: unknown) => {
+        const response = await fetchJson<{ didWrite: boolean; message: { id: string } }>(`${server!.baseUrl}/v2/sessions/${sessionId}/messages`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ localId, content: { t: 'plain', v: value } }), timeoutMs: 20_000,
+        });
+        expect(response.status).toBe(200);
+        expect(response.data.didWrite).toBe(true);
+        return response.data.message.id;
+      };
+      const output = (data: unknown) => ({ role: 'agent', content: { type: 'output', data }, meta: { source: 'cli' } });
+      await post('skill-call', output({ type: 'assistant', uuid: 'skill-call', message: { role: 'assistant', content: [
+        { type: 'tool_use', id: 'skill-tool', name: 'Skill', input: { skill: 'example' } },
+      ] } }));
+      await post('skill-result', output({ type: 'user', uuid: 'skill-result', isSynthetic: true, message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'skill-tool', content: 'Launching skill: example' },
+      ] } }));
+      for (const flags of [{ isMeta: true }, { isSynthetic: true }]) {
+        const uuid = flags.isMeta ? 'skill-meta' : 'skill-synthetic';
+        await post(uuid, output({ type: 'user', uuid, ...flags, message: { role: 'user', content: instructions } }));
+      }
+      await post('real-user', { role: 'user', content: { type: 'text', text: instructions } });
+      await page.goto(`${uiBaseUrl}/session/${sessionId}?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      for (const reload of [false, true]) {
+        if (reload) await page.reload({ waitUntil: 'domcontentloaded' });
+        // UI row identities are reducer-owned, not the stored server row IDs. All three
+        // text records are identical; exactly one rendered quotation proves flag-based filtering.
+        const quotations = page.locator('[data-testid^="transcript-message-"]').filter({ hasText: 'Skill instruction quotation' });
+        await expect(quotations).toHaveCount(1, { timeout: 120_000 });
+        await expect(quotations).toBeVisible();
+        const card = page.getByTestId('tool-timeline-row').or(page.getByTestId('tool-view-container'));
+        await expect(card).toHaveCount(1);
+        const header = page.getByTestId('tool-timeline-row').or(page.getByTestId('tool-view-header-primary'));
+        await header.click();
+        await expect(page.getByTestId('tool-timeline-body').or(page.getByTestId('tool-view-container')))
+          .toContainText('Launching skill: example');
+        await page.screenshot({ path: testInfo.outputPath(reload ? 'skill-instructions-after-reload.png' : 'skill-instructions-filtered.png'), animations: 'disabled' });
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics());
+    }
+  });
+
+  test('lets a shared admin archive and delete through the actual session action menu', async ({ page }, testInfo) => {
+    test.setTimeout(240_000);
+    if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const authResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/v1/auth' && response.ok());
+      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await waitForInitialAppUi({ page, browserDiagnostics });
+      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+      const authBody: unknown = await (await authResponse).json();
+      if (!authBody || typeof authBody !== 'object' || !('token' in authBody) || typeof authBody.token !== 'string') {
+        throw new Error('missing shared-admin fixture authentication');
+      }
+      const adminToken = authBody.token;
+      const owner = await createTestAuth(server.baseUrl);
+      const [adminId, ownerId] = await Promise.all([
+        fetchAccountId(server.baseUrl, adminToken), fetchAccountId(server.baseUrl, owner.token),
+      ]);
+      const suffix = Date.now().toString(36);
+      await setUsername(server.baseUrl, owner.token, `owner_${suffix}`);
+      await setUsername(server.baseUrl, adminToken, `admin_${suffix}`);
+      await addFriend(server.baseUrl, owner.token, adminId);
+      await addFriend(server.baseUrl, adminToken, ownerId);
+      await mutateUiE2eScopedAccountSettings({ page, settingsPatch: { actionsSettingsV1: {
+        v: 1, actions: { 'session.archive': { approvalRequiredSurfaces: ['ui_button'] } },
+      } } });
+
+      const createShared = async (title: string) => {
+        const sessionId = await createPlainSession({ baseUrl: server!.baseUrl, token: owner.token, title,
+          rootPath: '/shared-admin-fixture', machineId: 'shared-admin-fixture', tagPrefix: 'shared-admin' });
+        const shared = await fetchJson<unknown>(`${server!.baseUrl}/v1/sessions/${sessionId}/shares`, {
+          method: 'POST', headers: { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: adminId, accessLevel: 'admin' }), timeoutMs: 20_000,
+        });
+        expect(shared.status).toBe(200);
+        return sessionId;
+      };
+      const menu = page.getByTestId('session-header-action-menu-trigger');
+      const archiveId = await createShared('Shared admin archive');
+      await page.goto(`${uiBaseUrl}/session/${archiveId}?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      await expect(menu).toBeVisible({ timeout: 120_000 });
+      await menu.click();
+      await expect(page.getByTestId('dropdown-option-ui_session_archive')).toBeVisible();
+      await expect(page.getByTestId('dropdown-option-ui_session_delete')).toBeVisible();
+      await expect.poll(() => page.getByTestId('dropdown-option-ui_session_archive').evaluate((element) => {
+        for (let parent: Element | null = element; parent; parent = parent.parentElement) {
+          if (getComputedStyle(parent).opacity !== '1') return false;
+        }
+        return true;
+      })).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath('shared-admin-session-menu.png'), animations: 'disabled' });
+      const archived = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/v2/sessions/${archiveId}/archive` && response.ok());
+      await page.getByTestId('dropdown-option-ui_session_archive').click();
+      await expect(page.getByTestId('web-modal-confirm')).toBeVisible();
+      await page.getByTestId('web-modal-confirm').click();
+      expect((await archived).ok()).toBe(true);
+
+      const deleteId = await createShared('Shared admin delete');
+      await page.goto(`${uiBaseUrl}/session/${deleteId}?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      await expect(menu).toBeVisible({ timeout: 120_000 });
+      await menu.click();
+      await page.getByTestId('dropdown-option-ui_session_delete').click();
+      await expect(page.getByTestId('web-modal-confirm')).toBeVisible();
+      const deleted = page.waitForResponse((response) => response.request().method() === 'DELETE'
+        && new URL(response.url()).pathname === `/v1/sessions/${deleteId}`);
+      await page.getByTestId('web-modal-confirm').click();
+      expect((await deleted).ok()).toBe(true);
+      const absent = await fetchJson<unknown>(`${server.baseUrl}/v2/sessions/${deleteId}`, {
+        headers: { Authorization: `Bearer ${owner.token}` }, timeoutMs: 20_000,
+      });
+      expect(absent.status).toBe(404);
+      await expect(page.getByTestId(`session-list-item-${deleteId}`)).toHaveCount(0);
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics());
+    }
   });
 
   test('confirms running session deletion, preserves failures, and keeps Archive independent', async ({ page }, testInfo) => {

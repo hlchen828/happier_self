@@ -179,7 +179,7 @@ describe('Archived sessions delete action', () => {
         expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(2);
     });
 
-    it('offers stop-and-delete for owned active and connected rows while withholding delete from ineligible rows', async () => {
+    it('offers delete to shared admins and stop-and-delete for owned active and connected rows while withholding delete from ineligible rows', async () => {
         const rows = [
             archivedSession({ id: 'shared', owner: 'someone-else', accessLevel: 'admin', metadata: {
                 name: 'Shared archive', path: '/tmp/shared', host: 'tester.local',
@@ -211,7 +211,7 @@ describe('Archived sessions delete action', () => {
         expect(screen.getTextContent()).toContain('Shared archive');
         expect(screen.getTextContent()).toContain('Active archive');
         expect(screen.getTextContent()).toContain('Connected archive');
-        expect(actionButtons(screen.root, 'sessionInfo.deleteSession')).toHaveLength(2);
+        expect(actionButtons(screen.root, 'sessionInfo.deleteSession')).toHaveLength(3);
         for (const session of rows) {
             const title = screen.root.findAll((node) => node.props.children === session.metadata?.name)[0];
             expect(title).toBeDefined();
@@ -219,7 +219,7 @@ describe('Archived sessions delete action', () => {
             while (row && typeof row.props.onPress !== 'function') row = row.parent;
             if (!row) throw new Error(`Expected session row for ${session.id}`);
             expect(actionButtons(row, 'sessionInfo.deleteSession')).toHaveLength(
-                session.id === 'active' || session.id === 'connected' ? 1 : 0,
+                session.id === 'shared' || session.id === 'active' || session.id === 'connected' ? 1 : 0,
             );
         }
         expect(actionButtons(screen.root, 'sessionInfo.unarchiveSession').length).toBeGreaterThan(0);

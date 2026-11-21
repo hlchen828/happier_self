@@ -57,7 +57,7 @@ export function createSessionActionTarget(params: Readonly<{
     const terminalControlPolicy = resolveTerminalControlServiceabilityPolicy(terminalControlServiceability);
     const hasPreservedTerminalHost = terminalControlPolicy.hostPresence === 'preserved';
     const hasStoppableTerminalHost = terminalControlPolicy.canRequestStop;
-    const canStop = isOwnedByCurrentUser;
+    const canStop = hasAdminAccess;
     const canArchive = hasAdminAccess && !isArchived && (!isActive || canStop);
     const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
     const resumeMetadata = session.metadata as ResumeSessionMetadata | null;
@@ -83,8 +83,8 @@ export function createSessionActionTarget(params: Readonly<{
         canArchive,
         canRename: hasAdminAccess,
         canResume,
-        canDelete: isOwnedByCurrentUser && !isActive && !hasPreservedTerminalHost && params.isConnected !== true,
-        canStopAndDelete: isOwnedByCurrentUser && (isActive || hasStoppableTerminalHost || params.isConnected === true),
+        canDelete: hasAdminAccess && !isActive && !hasPreservedTerminalHost && params.isConnected !== true,
+        canStopAndDelete: hasAdminAccess && (isActive || hasStoppableTerminalHost || params.isConnected === true),
         readStateAction: isArchived
             ? { kind: 'none', visible: false }
             : resolveSessionReadStateAction(session),

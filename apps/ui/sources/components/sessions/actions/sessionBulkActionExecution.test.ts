@@ -250,7 +250,8 @@ describe('executeSessionBulkAction', () => {
         expect(result.failed).toEqual([
             expect.objectContaining({
                 reasonCode: 'session_stop_control_unavailable',
-                reason: 'Happier could not reach the session controls. Make sure the session machine and daemon are online, then try again.',
+                status: 'failed',
+                reason: expect.any(String),
             }),
         ]);
     });

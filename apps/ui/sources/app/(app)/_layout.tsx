@@ -24,6 +24,7 @@ import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/Horizon
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
+import { AndroidPetOverlayRuntimeMount } from '@/components/pets/android/AndroidPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -110,6 +111,7 @@ const AuthenticatedAppShellRuntimes = React.memo(function AuthenticatedAppShellR
     return (
         <>
             <DesktopPetOverlayRuntimeMount />
+            <AndroidPetOverlayRuntimeMount />
             <PetAppShellCompanionMount />
             <ReleaseNotesAutoShowMount />
             <PushNotificationPermissionPrimingRuntime />
@@ -388,6 +390,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 name="restore/show-qr"
                 options={UNAUTH_SHELL_STACK_SCREEN_OPTIONS}
             />
+            <Stack.Screen name="join" options={UNAUTH_SHELL_STACK_SCREEN_OPTIONS} />
             <Stack.Screen
                 name="restore/manual"
                 options={mixedUseRouteScreenOptions.restoreManual}

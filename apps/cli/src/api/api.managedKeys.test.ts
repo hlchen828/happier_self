@@ -1,0 +1,398 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import fastify from 'fastify';
+import tweetnacl from 'tweetnacl';
+import { Server } from 'socket.io';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { decodeBase64, deriveAccountMachineKeyFromRecoverySecret, MachineKeysPublishRequestSchema, openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1, encodeBase64 } from '@happier-dev/protocol';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createAccountProfileFixture, createAccountTokenFixture } from '@/testkit/backends/accountFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+
+const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+afterEach(() => { envScope.restore(); vi.resetModules(); });
+
+type ReplayEntry = 'creator' | 'fork' | 'source-context' | 'legacy-rpc' | 'control';
+
+async function withReplayHttpFixture(
+  options: Readonly<{ managed?: boolean; machineId?: string; loseCreateResponse?: boolean; loseSpawnResponse?: boolean }>,
+  run: (fixture: Readonly<{
+    replay: (entry: ReplayEntry) => Promise<unknown>;
+    rows: Map<string, RawSessionRecord>;
+    posted: Record<string, unknown>[];
+    launches: SpawnSessionOptions[];
+    archives: string[];
+    readMetadata: (row: RawSessionRecord) => Record<string, unknown> | null;
+  }>) => Promise<void>,
+): Promise<void> {
+  await withTempDir('happier-replay-machine-', async (home) => {
+    const identity = tweetnacl.box.keyPair();
+    const credentials = { token: createAccountTokenFixture('machine'), encryption: {
+      type: 'dataKey' as const, publicKey: identity.publicKey, machineKey: identity.secretKey,
+    } };
+    const rows = new Map<string, RawSessionRecord>();
+    const posted: Record<string, unknown>[] = [];
+    const launches: SpawnSessionOptions[] = [];
+    const archives: string[] = [];
+    const app = fastify({ logger: false });
+    app.get('/v1/features', async () => ({
+      features: { accounts: { machineAccess: { enabled: options.managed !== false } } },
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } },
+    }));
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    app.get('/v2/sessions/sess_parent', async () => ({ session: createSessionRecordFixture({
+      id: 'sess_parent', seq: 11, share: null, encryptionMode: 'plain', metadata: JSON.stringify({
+        path: home, flavor: 'claude', machineId: 'parent-machine', permissionMode: 'plan',
+      }),
+    }) }));
+    app.get('/v1/sessions/sess_parent/messages', async (request) => {
+      const beforeSeq = Number((request.query as { beforeSeq?: string }).beforeSeq ?? Infinity);
+      return {
+        messages: beforeSeq > 5 ? [{ seq: 5, createdAt: 1, content: {
+          t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Carry this real source turn into replay.' } },
+        } }] : [],
+        hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+      };
+    });
+    app.post('/v1/sessions', async (request, reply) => {
+      const body = request.body as Record<string, unknown>;
+      posted.push(body);
+      expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+      if (options.managed !== false && body.machineId !== 'target-machine') {
+        return reply.code(400).send({ error: 'managed_machine_id_required' });
+      }
+      const tag = String(body.tag);
+      const existing = rows.get(tag);
+      const row: RawSessionRecord = existing ?? {
+        ...createSessionRecordFixture({ id: `sess_child_${rows.size + 1}` }),
+        encryptionMode: body.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+        metadata: String(body.metadata),
+        agentState: null,
+        dataEncryptionKey: typeof body.dataEncryptionKey === 'string' ? body.dataEncryptionKey : null,
+      };
+      rows.set(tag, row);
+      if (options.loseCreateResponse) {
+        reply.hijack();
+        reply.raw.destroy();
+        return;
+      }
+      return { resolution: existing ? 'existing' : 'created', session: row };
+    });
+    app.post('/v2/sessions/:id/archive', async (request) => {
+      archives.push((request.params as { id: string }).id);
+      return { success: true, archivedAt: 1 };
+    });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+    envScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: origin, HAPPIER_PUBLIC_SERVER_URL: origin, HAPPIER_WEBAPP_URL: origin });
+    vi.resetModules();
+    try {
+      const { writeCredentialsDataKey } = await import('@/persistence');
+      await writeCredentialsDataKey({ token: credentials.token, publicKey: identity.publicKey, machineKey: identity.secretKey });
+      const { createSpawnedSession } = await import('@/session/services/createSpawnedSession');
+      const { continueSessionWithReplay } = await import('@/session/replay/continueWithReplay');
+      const { registerMachineRpcHandlers } = await import('@/api/machine/rpcHandlers');
+      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+      const { tryDecryptSessionMetadata } = await import('@/session/transport/encryption/sessionEncryptionContext');
+      // Provider execution is the OS boundary: record the real launch projection,
+      // but do not start an agent or a daemon in this transport contract test.
+      const spawnSession = async (request: SpawnSessionOptions) => {
+        launches.push(request);
+        if (options.loseSpawnResponse) {
+          throw Object.assign(new Error('Lost provider launch acknowledgement'), { code: 'ECONNRESET' });
+        }
+        return { type: 'success' as const, sessionId: request.existingSessionId! };
+      };
+      const manager = new RpcHandlerManager({ scopePrefix: 'receiver', encryptionKey: null, encryptionVariant: 'plain' });
+      registerMachineRpcHandlers({ rpcHandlerManager: manager, machineId: options.machineId,
+        handlers: { spawnSession, stopSession: async () => true, requestShutdown: () => {} } });
+      const replay = async (entry: ReplayEntry): Promise<unknown> => {
+        if (entry === 'creator') return await createSpawnedSession({
+          credentials, directory: home, machineId: options.machineId,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          replaySeededCreation: {
+            tag: 'creator-retry', agentId: 'claude',
+            // A source from another machine must not supply creation placement.
+            metadata: { machineId: 'parent-machine', replaySeedV1: {
+              v: 1, seedText: 'source seed', sourceSessionId: 'sess_parent', sourceCutoffSeqInclusive: 11, createdAtMs: 1,
+            } },
+            sourceRecipe: { sourceSessionId: 'sess_parent', cutoffSeqInclusive: 11 },
+          }, directTransport: { spawn: spawnSession },
+        });
+        if (entry === 'control') return await continueSessionWithReplay({
+          directory: home, agentId: 'claude', replay: { previousSessionId: 'sess_parent' },
+        }, { spawnSession, machineId: options.machineId });
+        if (entry === 'fork') return await manager.invokeLocal(RPC_METHODS.SESSION_FORK, {
+          v: 1, parentSessionId: 'sess_parent', forkPoint: { type: 'latest' }, strategy: 'replay', requestId: 'one-fork-attempt',
+        });
+        if (entry === 'legacy-rpc') return await manager.invokeLocal(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, {
+          directory: home, agent: 'claude', replay: { previousSessionId: 'sess_parent' },
+        });
+        return await manager.invokeLocal(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, {
+          directory: home, backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          spawnNonce: 'one-source-attempt', sourceContext: {
+            v: 1, kind: 'session_replay', sourceSessionId: 'sess_parent', forkPoint: { type: 'latest' },
+          },
+        });
+      };
+      await run({ replay, rows, posted, launches, archives,
+        readMetadata: (rawSession) => tryDecryptSessionMetadata({ credentials, rawSession }),
+      });
+    } finally { await app.close(); }
+  });
+}
+
+describe('Replay creation machine identity over real HTTP', () => {
+  it.each(['creator', 'fork', 'source-context', 'legacy-rpc', 'control'] as const)(
+    'binds managed %s Replay to the actual target, not the parent machine', async (entry) => {
+      await withReplayHttpFixture({ machineId: '  target-machine  ' }, async (fixture) => {
+        const result = await fixture.replay(entry);
+        expect(result).toMatchObject(entry === 'creator' ? { created: true }
+          : entry === 'fork' ? { ok: true } : { type: 'success' });
+        expect(fixture.rows.size).toBe(1);
+        expect(fixture.posted[0]).toMatchObject({ machineId: 'target-machine', encryptionMode: 'e2ee' });
+        const row = [...fixture.rows.values()][0]!;
+        expect(fixture.readMetadata(row)).toMatchObject({ machineId: 'target-machine', replaySeedV1: {
+          sourceSessionId: 'sess_parent', sourceCutoffSeqInclusive: 11,
+        } });
+        expect(fixture.launches[0]?.existingSessionId).toBe(row.id);
+        expect(fixture.archives).toEqual([]);
+      });
+    },
+  );
+
+  it.each(['creator', 'fork', 'source-context', 'legacy-rpc', 'control'] as const)(
+    'reports missing managed machine identity as definite INVALID_REQUEST for %s before POST', async (entry) => {
+      await withReplayHttpFixture({}, async (fixture) => {
+        if (entry === 'creator') {
+          await expect(fixture.replay(entry)).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+        } else {
+          expect(await fixture.replay(entry)).toMatchObject({
+            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: 'Managed session creation requires the enrolled machine id.',
+          });
+        }
+        expect(fixture.posted).toEqual([]);
+        expect(fixture.rows.size).toBe(0);
+        expect(fixture.launches).toEqual([]);
+        expect(fixture.archives).toEqual([]);
+      });
+    },
+  );
+
+  it('preserves plain-mode creation and exact fork lineage on an ordinary account', async () => {
+    await withReplayHttpFixture({ managed: false, machineId: 'target-machine' }, async (fixture) => {
+      expect(await fixture.replay('fork')).toMatchObject({ ok: true });
+      expect(fixture.posted[0]).toMatchObject({ encryptionMode: 'plain', dataEncryptionKey: null });
+      expect(fixture.posted[0]).not.toHaveProperty('machineId');
+      expect(fixture.readMetadata([...fixture.rows.values()][0]!)).toMatchObject({
+        machineId: 'target-machine', forkV1: { parentSessionId: 'sess_parent', parentCutoffSeqInclusive: 11, requestId: 'one-fork-attempt' },
+      });
+    });
+  });
+
+  it.each(['creator', 'fork', 'source-context'] as const)('rejoins one managed child when %s is retried', async (entry) => {
+    await withReplayHttpFixture({ machineId: 'target-machine' }, async (fixture) => {
+      const first = await fixture.replay(entry);
+      expect(first).toMatchObject(entry === 'creator' ? { created: true }
+        : entry === 'fork' ? { ok: true } : { type: 'success' });
+      expect(await fixture.replay(entry)).toEqual(first);
+      expect(fixture.rows.size).toBe(1);
+      expect(new Set(fixture.launches.map((request) => request.existingSessionId))).toEqual(new Set([[...fixture.rows.values()][0]!.id]));
+    });
+  });
+
+  it('preserves unknown fork outcome and its committed row after a coded launch transport throw', async () => {
+    await withReplayHttpFixture({ machineId: 'target-machine', loseSpawnResponse: true }, async (fixture) => {
+      expect(await fixture.replay('fork')).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED });
+      expect(fixture.rows.size).toBe(1);
+      expect(fixture.launches).toHaveLength(1);
+      expect(fixture.archives).toEqual([]);
+    });
+  });
+
+  it('keeps a lost HTTP create response outcome-unknown without spawning or archiving', async () => {
+    await withReplayHttpFixture({ machineId: 'target-machine', loseCreateResponse: true }, async (fixture) => {
+      expect(await fixture.replay('fork')).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED });
+      expect(fixture.rows.size).toBe(1);
+      expect(fixture.launches).toEqual([]);
+      expect(fixture.archives).toEqual([]);
+    });
+  });
+});
+
+describe('managed machine key delivery', () => {
+  it.each(['api', 'by-tag'] as const)('binds %s session creation to the negotiated managed machine', async (entry) => {
+    await withTempDir('happier-managed-session-', async (home) => {
+      const app = fastify({ logger: false });
+      app.get('/v1/features', async () => ({ features: { accounts: { machineAccess: { enabled: true } } }, capabilities: {} }));
+      app.post('/v1/sessions', async (request, reply) => {
+        const body = request.body as Record<string, unknown>;
+        if (body.machineId !== 'm1') return reply.code(400).send({ error: 'managed_machine_id_required' });
+        return { resolution: 'created', session: { ...body, id: 's1', seq: 1, createdAt: 1, updatedAt: 1,
+          active: false, activeAt: 0, metadataVersion: 1, agentStateVersion: 0 } };
+      });
+      const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+      envScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: origin, HAPPIER_PUBLIC_SERVER_URL: origin, HAPPIER_WEBAPP_URL: origin });
+      vi.resetModules();
+      try {
+        const identity = tweetnacl.box.keyPair();
+        const credentials = { token: createAccountTokenFixture('machine'), encryption: {
+          type: 'dataKey' as const, publicKey: identity.publicKey, machineKey: identity.secretKey,
+        } };
+        const metadata = { machineId: 'm1', path: home, host: 'test', homeDir: home,
+          happyHomeDir: home, happyLibDir: home, happyToolsDir: home };
+        if (entry === 'api') {
+          const { ApiClient } = await import('./api');
+          const api = await ApiClient.create(credentials);
+          expect((await api.getOrCreateSession({ tag: 'tag', metadata, state: null }))?.id).toBe('s1');
+        } else {
+          const { getOrCreateSessionByTag } = await import('@/session/transport/http/sessionsHttp');
+          expect((await getOrCreateSessionByTag({ credentials, tag: 'tag', metadata, agentState: null })).session.id).toBe('s1');
+        }
+      } finally { await app.close(); }
+    });
+  });
+
+  it('delivers a real recipient-specific resource-key envelope after machine registration', async () => {
+    await withTempDir('happier-managed-key-delivery-', async (home) => {
+      const identity = tweetnacl.box.keyPair();
+      const memberSeed = tweetnacl.randomBytes(32);
+      const adminSeed = tweetnacl.randomBytes(32);
+      const profiles = [
+        createAccountProfileFixture({ accountId: 'admin', signingSeed: adminSeed }),
+        createAccountProfileFixture({ accountId: 'member', signingSeed: memberSeed }),
+      ];
+      const recipients = profiles.map((profile) => ({ accountId: profile.id, publicKey: profile.publicKey!,
+        contentPublicKey: profile.contentPublicKey!, contentPublicKeySig: profile.contentPublicKeySig! }));
+      const publications: unknown[] = [];
+      let corruptRecipientBinding = false;
+      let holdRecipientRequest = false;
+      let recipientRequestHeld = false;
+      let releaseRecipientRequest: (() => void) | undefined;
+      const sessionKeys = new Map(['s1', 's2', 's3'].map((id) => [id, tweetnacl.randomBytes(32)]));
+      const sessionRow = (id: string) => ({ id, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 0,
+        metadata: 'encrypted', metadataVersion: 1, agentState: null, agentStateVersion: 0,
+        dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKeys.get(id)!,
+          recipientPublicKey: identity.publicKey, randomBytes: tweetnacl.randomBytes })) });
+      const app = fastify({ logger: false });
+      app.get('/v1/features', async () => ({ features: { accounts: { machineAccess: { enabled: true } } }, capabilities: {} }));
+      app.get('/v1/account/access', async () => ({ managed: true, role: 'machine', adminAccountId: 'admin', machineId: null }));
+      app.get('/v1/machines/m1', async (_request, reply) => reply.code(404).send({ error: 'not found' }));
+      app.post('/v1/machines', async (request) => ({ machine: { ...(request.body as Record<string, unknown>), metadataVersion: 1, daemonStateVersion: 0 } }));
+      app.get('/v1/machines/m1/recipients', async () => {
+        if (holdRecipientRequest) {
+          recipientRequestHeld = true;
+          await new Promise<void>((resolve) => { releaseRecipientRequest = resolve; });
+        }
+        return { machineId: 'm1', recipients: corruptRecipientBinding
+          ? recipients.map((recipient) => ({ ...recipient, contentPublicKeySig: encodeBase64(new Uint8Array(64)) }))
+          : recipients };
+      });
+      app.get('/v2/sessions', async (request) => {
+        const cursor = (request.query as Record<string, unknown>).cursor;
+        return cursor === 'page-2'
+          ? { sessions: [sessionRow('s2')], nextCursor: null, hasNext: false }
+          : { sessions: [sessionRow('s1')], nextCursor: 'page-2', hasNext: true };
+      });
+      app.get('/v2/sessions/s3', async () => ({ session: sessionRow('s3') }));
+      app.get('/v2/changes', async () => ({ changes: [], nextCursor: 0 }));
+      app.get('/v1/account/profile', async () => ({ id: 'machine' }));
+      app.put('/v1/machines/m1/keys', async (request) => { publications.push(request.body); return { success: true }; });
+      const relay = new Server(app.server, { path: '/v1/updates' });
+      relay.on('connection', (socket) => {
+        socket.on(SOCKET_RPC_EVENTS.REGISTER, (payload) => socket.emit(SOCKET_RPC_EVENTS.REGISTERED, payload));
+        socket.on('ping', (ack) => ack({ v: 1 }));
+        socket.on('machine-update-state', (payload, ack) => ack({ result: 'success', version: payload.expectedVersion + 1, daemonState: payload.daemonState }));
+      });
+      const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+      envScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: origin, HAPPIER_PUBLIC_SERVER_URL: origin, HAPPIER_WEBAPP_URL: origin });
+      vi.resetModules();
+      try {
+        const { ApiClient } = await import('./api');
+        const api = await ApiClient.create({ token: createAccountTokenFixture('machine'), encryption: {
+          type: 'dataKey', publicKey: identity.publicKey, machineKey: identity.secretKey,
+        } });
+        const machine = await api.getOrCreateMachine({ machineId: 'm1', metadata: {
+          host: 'test-machine', platform: 'linux', happyCliVersion: '0.2.20', homeDir: home,
+          happyHomeDir: home, happyLibDir: home,
+        } });
+        expect(publications).toHaveLength(2);
+        const payload = MachineKeysPublishRequestSchema.parse(publications[0]);
+        const assertSessionEnvelope = (publication: unknown, sessionId: string) => {
+          const row = MachineKeysPublishRequestSchema.parse(publication).sessions.find((session) => session.sessionId === sessionId)!;
+          expect(row).toBeDefined();
+          for (const [accountId, seed] of [['member', memberSeed], ['admin', adminSeed]] as const) {
+            expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(row.recipients.find((recipient) => recipient.accountId === accountId)!.dataEncryptionKey),
+              recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(seed) })).toEqual(sessionKeys.get(sessionId));
+          }
+        };
+        assertSessionEnvelope(publications[0], 's1');
+        assertSessionEnvelope(publications[1], 's2');
+        expect(payload.recipients.map((row) => row.accountId)).toEqual(['admin', 'member']);
+        const memberEnvelope = payload.recipients.find((row) => row.accountId === 'member')!.dataEncryptionKey;
+        expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(memberEnvelope),
+          recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(memberSeed) })).toEqual(machine.encryptionKey);
+        expect(machine.encryptionKey).not.toEqual(identity.secretKey);
+        expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(memberEnvelope),
+          recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(adminSeed) })).toBeNull();
+        const client = api.machineSyncClient(machine);
+        // Execution is an OS/provider boundary; this key-delivery recipe must not start tasks.
+        const unexpectedExecution = async (): Promise<never> => { throw new Error('Unexpected task execution'); };
+        client.setRPCHandlers({
+          spawnSession: unexpectedExecution,
+          resolveSpawnSessionByNonce: unexpectedExecution,
+          stopSession: unexpectedExecution,
+          requestShutdown: () => { throw new Error('Unexpected daemon shutdown'); },
+        });
+        try {
+          client.connect();
+          await vi.waitFor(() => expect(relay.sockets.sockets.size).toBe(1));
+          await vi.waitFor(() => expect(publications).toHaveLength(4));
+          publications.length = 0;
+          relay.emit('update', { id: 'new-session', seq: 2, createdAt: 1,
+            body: { t: 'managed-access-changed', machineId: 'm1', sessionId: 's3' } });
+          await vi.waitFor(() => expect(publications).toHaveLength(1));
+          expect(MachineKeysPublishRequestSchema.parse(publications[0]).recipients).toEqual([]);
+          assertSessionEnvelope(publications[0], 's3');
+          publications.length = 0;
+          relay.emit('update', { id: 'access-change', seq: 3, createdAt: 1,
+            body: { t: 'managed-access-changed', machineId: 'm1' } });
+          await vi.waitFor(() => expect(publications).toHaveLength(2));
+          assertSessionEnvelope(publications[0], 's1');
+          assertSessionEnvelope(publications[1], 's2');
+          publications.length = 0;
+          const disconnectedSocket = [...relay.sockets.sockets.values()][0];
+          disconnectedSocket.conn.close();
+          await vi.waitFor(() => {
+            expect([...relay.sockets.sockets.values()].some((socket) => socket.id !== disconnectedSocket.id)).toBe(true);
+            expect(publications).toHaveLength(2);
+          }, { timeout: 5000 });
+          assertSessionEnvelope(publications[0], 's1');
+          assertSessionEnvelope(publications[1], 's2');
+          publications.length = 0;
+          holdRecipientRequest = true;
+          relay.emit('update', { id: 'held-delivery', seq: 4, createdAt: 1,
+            body: { t: 'managed-access-changed', machineId: 'm1' } });
+          await vi.waitFor(() => expect(recipientRequestHeld).toBe(true));
+          // Closing the client must cancel a live HTTP read, not await an unavailable holder.
+          await client.shutdown();
+          expect(publications).toEqual([]);
+        } finally { releaseRecipientRequest?.(); await client.shutdown(); }
+        holdRecipientRequest = false;
+        publications.length = 0;
+        corruptRecipientBinding = true;
+        const { publishManagedMachineKeys } = await import('@/api/machine/managedMachineKeyDelivery');
+        await expect(publishManagedMachineKeys({ machine, credentials: { token: createAccountTokenFixture('machine'),
+          encryption: { type: 'dataKey', publicKey: identity.publicKey, machineKey: identity.secretKey } } })).rejects.toThrow();
+        expect(publications).toEqual([]);
+      } finally {
+        await new Promise<void>((resolve) => relay.close(() => resolve()));
+        await app.close();
+      }
+    });
+  });
+});

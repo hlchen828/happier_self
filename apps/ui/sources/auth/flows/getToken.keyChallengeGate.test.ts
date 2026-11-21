@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => {
     };
 });
 
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
     serverFetch: mocks.serverFetch,
 }));
 
@@ -76,6 +77,38 @@ describe('authGetToken key-challenge gate', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
         expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v1/auth');
+    });
+
+    it('sends an invitation only to a managed-account server and binds the independent content key', async () => {
+        mocks.serverFetch
+            .mockResolvedValueOnce(jsonResponse({
+                features: {
+                    auth: { login: { keyChallenge: { enabled: true } } },
+                    accounts: { machineAccess: { enabled: true } },
+                    sharing: { contentKeys: { enabled: true } },
+                },
+                capabilities: {},
+            }))
+            .mockResolvedValueOnce(jsonResponse({ token: 'member-token' }));
+
+        const secret = new Uint8Array(32).fill(7);
+        await expect(authGetToken(secret, { inviteToken: 'single-use-invite' })).resolves.toBe('member-token');
+        const request = mocks.serverFetch.mock.calls.find(([path]) => path === '/v1/auth');
+        const body = JSON.parse(String(request?.[1]?.body)) as Record<string, unknown>;
+        expect(body.inviteToken).toBe('single-use-invite');
+        expect(body.contentPublicKey).toEqual(expect.any(String));
+        expect(body.contentPublicKeySig).toEqual(expect.any(String));
+        expect(body).not.toHaveProperty('secret');
+    });
+
+    it('does not disclose an invitation to an older or feature-disabled server', async () => {
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({
+            features: { auth: { login: { keyChallenge: { enabled: true } } } },
+            capabilities: {},
+        }));
+
+        await expect(authGetToken(new Uint8Array(32), { inviteToken: 'private-invite' })).rejects.toThrow();
+        expect(mocks.serverFetch.mock.calls.some(([path]) => path === '/v1/auth')).toBe(false);
     });
 
     it('surfaces signup-disabled through the canonical typed auth error', async () => {

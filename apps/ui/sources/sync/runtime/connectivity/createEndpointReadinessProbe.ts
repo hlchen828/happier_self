@@ -1,4 +1,5 @@
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
+import { Platform } from 'react-native';
 
 import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilities/probeAuthenticatedServerAuthPingEndpoint';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
@@ -6,6 +7,7 @@ import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
+import { shouldKeepBackgroundSyncActive } from './backgroundSyncService';
 
 function normalizeAbsoluteHttpBaseUrl(raw: string): string | null {
     const value = String(raw ?? '').trim();
@@ -124,7 +126,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
     };
 
     return async () => {
-        if (!isRuntimeActive()) {
+        if (!isRuntimeActive() && !shouldKeepBackgroundSyncActive(Platform.OS, false)) {
             return {
                 status: 'retry_later',
                 retryAfterMs: backgroundRetryAfterMs,

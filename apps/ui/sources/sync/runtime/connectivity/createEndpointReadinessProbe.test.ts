@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
+const appState = vi.hoisted(() => ({ currentState: 'active' as string, platform: 'web' }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchMock,
@@ -11,7 +11,7 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                        Platform: { OS: 'web' },
+                        Platform: { get OS() { return appState.platform; } },
                         AppState: {
                             get currentState() {
                                 return appState.currentState;
@@ -29,8 +29,28 @@ describe('createEndpointReadinessProbe', () => {
     afterEach(() => {
         runtimeFetchMock.mockReset();
         appState.currentState = 'active';
+        appState.platform = 'web';
         vi.resetModules();
         vi.useRealTimers();
+    });
+
+    it('probes while the Android overlay service runs but not after it stops', async () => {
+        appState.platform = 'android';
+        appState.currentState = 'background';
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        const { setBackgroundSyncServiceRunning } = await import('./backgroundSyncService');
+        const { createEndpointReadinessProbe } = await import('./createEndpointReadinessProbe');
+        const probe = createEndpointReadinessProbe({ endpoint: 'https://server.example.test', token: 'token-1' });
+        setBackgroundSyncServiceRunning(true);
+        try {
+            await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'ready' }));
+            expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+            setBackgroundSyncServiceRunning(false);
+            await expect(probe()).resolves.toEqual(expect.objectContaining({ status: 'retry_later' }));
+            expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        } finally {
+            setBackgroundSyncServiceRunning(false);
+        }
     });
 
     it('answers readiness with a single authenticated ping when a token is available', async () => {

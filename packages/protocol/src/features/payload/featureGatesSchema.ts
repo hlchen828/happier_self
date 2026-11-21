@@ -12,6 +12,10 @@ const VoiceGateSchema = lazySchema(() => z.object({
 }));
 
 export const FeatureGatesSchema = lazySchema(() => z.object({
+  accounts: z.object({
+    machineAccess: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    inviteMachineAssignment: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  }).optional().default({ machineAccess: DEFAULT_GATE_DISABLED, inviteMachineAssignment: DEFAULT_GATE_DISABLED }),
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
   e2ee: z
     .object({

@@ -42,6 +42,12 @@ after an arbitrary deadline or run a fork-specific readiness poll.
 
 You can adjust the replay seed budget in Settings (`max seed characters`) to trade context vs. size.
 
+### Administrator-managed machines (development source)
+
+Replay forks use the receiving machine's enrolled identity, while continuing to respect your machine assignments. This requires the corrected development CLI on that machine; updating the web app alone cannot repair an older daemon's missing machine identity. The correction has not been published in a stable or preview release.
+
+If the daemon rejects creation before submitting the child, the chooser shows the failure reason. If the creation response is lost or startup remains unconfirmed, use **Check for fork** before trying again: a child may already exist. Native-fork availability is a separate Agent capability, so a disabled Native option does not by itself prevent Replay.
+
 ## Ancestor transcript rendering
 
 - The child session shows its own messages plus read-only ancestor context inline, with a “Forked from …” divider.

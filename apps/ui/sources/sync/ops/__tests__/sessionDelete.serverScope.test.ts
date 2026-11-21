@@ -70,7 +70,9 @@ describe('sessionDeleteWithServerScope', () => {
   });
 
   it.each([200, 404])('retires a remote Home row through an identity alias without touching a same-id active session (%s)', async (status) => {
-    remoteRequest.mockImplementation(async () => Response.json(status === 404 ? { error: 'Session not found or not owned by user' } : { success: true }, { status }));
+    remoteRequest.mockImplementation(async (_url, init) => Response.json(status === 404
+      ? { error: init?.method === 'GET' ? 'Session not found' : 'Session not found or not owned by user' }
+      : { success: true }, { status }));
     seedRemoteSession(serverB.id);
     setServerProfileIdentityForUrl(serverB.serverUrl, 'srv_delete_b');
     const activeSession = storage.getState().sessions[sessionId];
@@ -100,8 +102,39 @@ describe('sessionDeleteWithServerScope', () => {
     expect(storage.getState().sessionListViewDataByServerId).toBe(before.sessionListViewDataByServerId);
   });
 
+  it.each([200, 503, 404])('retains a shared-admin row after an ambiguous legacy DELETE 404 when the exact read returns %s without proving absence', async (status) => {
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: serverA.id,
+      owner: 'another-account', accessLevel: 'admin', archivedAt: 42 })]);
+    remoteRequest.mockImplementation(async (_url, init) => init?.method === 'DELETE'
+      ? Response.json({ error: 'Session not found or not owned by user' }, { status: 404 })
+      : Response.json(status === 200 ? { session: { id: sessionId } } : { error: 'Unknown route' }, { status }));
+    const before = storage.getState();
+
+    await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toMatchObject({ success: false });
+
+    expect(storage.getState().sessions).toBe(before.sessions);
+    expect(storage.getState().sessionListRenderables).toBe(before.sessionListRenderables);
+    const read = remoteRequest.mock.calls.find(([, init]) => init?.method === 'GET');
+    const readUrl = new URL(String(read?.[0]));
+    expect(`${readUrl.origin}${readUrl.pathname}`).toBe(`${serverA.serverUrl}/v2/sessions/${sessionId}`);
+    expect(new Headers(read?.[1]?.headers).get('Authorization')).toBe('Bearer header.eyJzdWIiOiJhY2NvdW50LWIifQ.signature');
+  });
+
+  it('retires a shared-admin row only after an exact read confirms absence following a legacy DELETE 404', async () => {
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: serverA.id,
+      owner: 'another-account', accessLevel: 'admin', archivedAt: 42 })]);
+    remoteRequest.mockImplementation(async (_url, init) => Response.json({ error: init?.method === 'GET'
+      ? 'Session not found' : 'Session not found or not owned by user' }, { status: 404 }));
+
+    await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toEqual({ success: true });
+
+    expect(remoteRequest.mock.calls.some(([, init]) => init?.method === 'GET')).toBe(true);
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+  });
+
   it('treats a missing server session as an idempotent deletion and retires it locally', async () => {
-    remoteRequest.mockImplementation(async () => Response.json({ error: 'Session not found or not owned by user' }, { status: 404 }));
+    remoteRequest.mockImplementation(async (_url, init) => Response.json({ error: init?.method === 'GET'
+      ? 'Session not found' : 'Session not found or not owned by user' }, { status: 404 }));
 
     await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toEqual({ success: true });
 
@@ -135,7 +168,8 @@ describe('sessionDeleteWithServerScope', () => {
         controller.close();
       },
     }), { status });
-    remoteRequest.mockImplementation(async () => response);
+    remoteRequest.mockImplementation(async (_url, init) => init?.method === 'GET'
+      ? Response.json({ error: 'Session not found' }, { status: 404 }) : response);
     vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({
       token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
     });

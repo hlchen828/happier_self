@@ -396,9 +396,10 @@ export async function getOrCreateSessionByTag(params: Readonly<{
 }>): Promise<{ session: RawSessionRecord; created: boolean }> {
   const serverUrl = resolveServerHttpBaseUrl();
 
-  const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
+  const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot, managedMachineId } = await resolveSessionCreateEncryptionMode({
     token: params.credentials.token,
     serverBaseUrl: serverUrl,
+    machineId: params.metadata.machineId,
   });
 
   const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(params.credentials);
@@ -425,6 +426,7 @@ export async function getOrCreateSessionByTag(params: Readonly<{
     agentState: agentStatePayload,
     dataEncryptionKey: dataEncryptionKeyPayload,
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
+    ...(managedMachineId ? { machineId: managedMachineId } : {}),
   }, {
     headers: {
       Authorization: `Bearer ${params.credentials.token}`,

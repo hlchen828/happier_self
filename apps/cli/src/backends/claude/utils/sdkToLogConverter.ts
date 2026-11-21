@@ -169,9 +169,11 @@ export class SDKToLogConverter {
             case 'user': {
                 const userMsg = sdkMessage as SDKUserMessage
                 const toolUseResult = (sdkMessage as any)?.tool_use_result as unknown;
+                const isInternalPrompt = providers.claude.isClaudeInternalUserPrompt(userMsg);
                 logMessage = {
                     ...baseFields,
                     type: 'user',
+                    ...(isInternalPrompt ? { isMeta: true } : {}),
                     message: userMsg.message,
                     ...(userMsg.origin ? { origin: userMsg.origin } : {}),
                 }

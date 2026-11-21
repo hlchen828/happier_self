@@ -85,13 +85,40 @@ existing list scan.
 The development UI retires a stale local Session through its existing deletion
 cleanup when an exact read returns authoritative `not_found`. Authentication,
 unrecognized 404s, legacy compatibility-list misses and transient read failures
-retain local state. Explicit Delete treats a successful DELETE or the recognized
-authenticated `Session not found or not owned by user` 404 response as idempotent
-local retirement. A settled Delete only retires the issuing Account's projection;
-a replacement Account on the same Home retains its local state.
+retain local state. Explicit Delete retires the local row after a successful DELETE.
+The released `server-v0.2.20` source at `282a8fc3f999df1d104b78daa489317e65d395a6`
+returns `Session not found or not owned by user` for both missing sessions and
+existing sessions shared with a non-owner. On that DELETE 404, the development UI
+uses `GET /v2/sessions/:sessionId` with the issuing Account's captured credentials
+and retires the row only when the canonical `Session not found` response confirms
+absence. An accessible session, failed read or unrecognized 404 retains local state.
+A settled Delete only retires the issuing Account's projection; a replacement
+Account on the same Home retains its local state.
+The development lifecycle policy permits owners and `admin` recipients to Stop,
+Archive and Delete ordinary shared and managed sessions. HTTP Delete rechecks the
+requester's canonical session access inside its deletion transaction. Cross-owner
+Stop routing is limited to the authorized session and its current owning machine;
+it does not grant machine-wide RPC authority. Managed machine allocation and
+administrator-only account management remain unchanged.
+
 In 0.2, Stop-and-delete still requires inactivity before deleting an existing
 Session; a failed Stop can finish without DELETE only when the canonical exact
 read proves the Session is already absent.
+
+Development Replay-seeded creation uses the canonical `createSpawnedSession` owner
+for forks, source-context launches and continuation. Its child metadata records the
+actual selected or receiving daemon's machine ID after composing the source recipe,
+so inherited parent metadata cannot redirect placement. Managed creation supplies
+that identity as the existing top-level `/v1/sessions` `machineId`; enrollment and
+allocation authorization still belong to the relay.
+
+A missing enrolled machine identity is a definite `INVALID_REQUEST` before the child
+POST or spawn. Replay ingresses preserve that domain rejection instead of replacing
+it with `UNEXPECTED`. A lost HTTP creation response remains `UNEXPECTED`, because
+the row may already exist; a spawn failure after row creation keeps the canonical
+creator's launch outcome and orphan-cleanup policy. No fork response field or
+persisted lineage format is added. This correction requires the updated CLI and
+has not been published as a stable or preview release.
 
 ### Machines
 - `POST /v1/machines` (create or load by id)

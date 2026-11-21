@@ -18,8 +18,8 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 79 features in the catalog. 22 of them have a switch you can
-reach; the other 57 are decided before you get there.
+There are 81 features in the catalog. 22 of them have a switch you can
+reach; the other 59 are decided before you get there.
 
 ## Features you can turn on yourself
 
@@ -66,6 +66,8 @@ behaviour but still needs the server to advertise the capability.
 
 | Id | What it gates | Owned by | Depends on |
 | --- | --- | --- | --- |
+| `accounts.inviteMachineAssignment` | Preauthorize managed machines when members redeem invitations. | server | `accounts.machineAccess` |
+| `accounts.machineAccess` | Administrator-managed independent accounts and E2EE machine grants. | server | — |
 | `actions.approvals` | ActionSpec-driven approval request queue and inbox UI surfaces. | client | `inbox.global` |
 | `agent.goals` | Generalized agent session goal controls and work-state goal projection (umbrella over provider-specific goal sub-gates). | client | — |
 | `app.analytics` | Anonymous analytics and instrumentation (PostHog). | client | — |

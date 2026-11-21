@@ -55,6 +55,27 @@ system/developer messages in the main chat timeline (they are treated as interna
 
 Tool normalization focuses on **tool-call/tool-result** and “tool-ish” structured events, not message role rendering.
 
+#### Claude Skill instructions (development source)
+
+Claude can emit a Skill's internal instructions as a separate user-role context message.
+`providers.claude.isClaudeInternalUserPrompt` owns its classification: `isMeta: true`
+marks metadata, while `isSynthetic: true` marks an internal prompt only for string or
+nonempty all-text content. Synthetic tool results, media and mixed content are not
+inferred to be internal from the synthetic flag alone.
+
+The SDK converter preserves that classification, and the CLI's human-text reader
+uses it before flattening SDK or native JSONL messages. Internal instructions stay
+in the raw output envelope rather than becoming ordinary user text. The UI consumes
+the same classifier and hides those instructions, retaining the Skill card and its
+actual tool result. Native task-result metadata keeps its existing exact-tool exception.
+
+This does not match Skill instruction wording or deduplicate identical text. Unmarked
+human quotations and repeated tool calls remain visible. Older CLI writes that already
+flattened instructions into unmarked user text cannot be safely reclassified by a UI
+update; this correction does not delete or rewrite those historical records. New
+writes require the corrected CLI; directly imported synthetic raw records also require
+the corrected UI. This behavior has not been verified in a published release.
+
 ### 2) CLI boundary normalization (V2)
 
 At the **CLI boundary** (before events become “session messages”), tool calls/results are normalized into V2:

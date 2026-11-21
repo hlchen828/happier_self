@@ -352,6 +352,9 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       flavor: replaySeededCreation.agentId,
       ...replaySeededCreation.metadata,
       ...connectedServiceChildLaunch.metadata,
+      // Placement belongs to this launch, never to inherited source metadata.
+      // An absent receiver identity must still reach the managed-mode guard.
+      machineId: args.spawnRequestInput.machineId,
     },
     agentState: null,
   });

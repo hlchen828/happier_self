@@ -172,6 +172,15 @@ override that policy or automatically accept held messages.
 
 ## Session lifecycle surfaces
 
+In development source, the SDK-to-transcript converter retains internal user
+prompt provenance as `isMeta`. Claude 2.1.327 exports its internal prompt flags
+as `isSynthetic` in SDK user messages; Happier maps synthetic non-tool-result
+messages to `isMeta` so loaded Skill instructions stay out of user chat bubbles.
+Synthetic tool results retain their success/error state and remain attached to
+their visible tool calls. Ordinary user text is not filtered by Skill-like wording.
+This corrects new SDK ingestion; it does not rewrite historical chat rows whose
+internal provenance was already lost.
+
 In development source, Claude background activity and workflow history share
 `taskNotifications/claudeTaskLifecycleEnvelope.ts` for native transcript task
 notifications, task-status attachments, peer handbacks, and successful resumed

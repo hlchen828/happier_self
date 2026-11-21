@@ -47,6 +47,7 @@ import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
+import { shouldKeepBackgroundSyncActive, subscribeBackgroundSyncService } from '@/sync/runtime/connectivity/backgroundSyncService';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import {
     computeSessionMessagesPaginationUpdateFromPage,
@@ -203,6 +204,7 @@ import { createSyncGenerationGuard } from './domains/scope/syncGenerationGuard';
 import { SessionMessagePageDecryptionError } from './engine/sessions/sessionMessagesPagePipeline';
 import {
     clearWarmCacheAccountScope,
+    clearWarmCachesForScope,
     loadMachineDisplayWarmCacheEntries,
     loadSessionListWarmCacheEntries,
     loadSessionOrganizationWarmCacheSnapshot,
@@ -995,7 +997,7 @@ class Sync {
       private changesCatchUpQueuedAfterResume = false;
       private pendingOutboxRearmInFlightByScope = new Map<string, Promise<void>>();
       private readonly usesPersistentDesktopSync = isTauriDesktop();
-      private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
+      private isForeground = shouldKeepBackgroundSyncActive(Platform.OS, this.usesPersistentDesktopSync) || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
     private sessionsSync: InvalidateSync;
     private fetchSessionsInFlight: { generation: number; promise: Promise<void> } | null = null;
@@ -1370,12 +1372,13 @@ class Sync {
             this.machineActivityAccumulator = new MachineActivityAccumulator(this.flushMachineActivityUpdates.bind(this), 300);
 
           // Listen for app state changes to pause sync + run a single centralized resume pipeline.
-          AppState.addEventListener('change', (nextAppState) => {
-              if (this.usesPersistentDesktopSync && nextAppState !== 'active') {
+          const handleAppStateChange = (nextAppState: string) => {
+              if (shouldKeepBackgroundSyncActive(Platform.OS, this.usesPersistentDesktopSync) && nextAppState !== 'active') {
                   this.clearNativeInactiveCheckpointTimer();
                   this.isForeground = true;
                   setServerReachabilityNetworkAllowed(true);
                   this.pauseController.resume();
+                  this.resumeNativeCryptoWorkerDispatchAfterForeground('Sync.backgroundService.crypto');
                   return;
               }
               if (nextAppState === 'active') {
@@ -1406,7 +1409,16 @@ class Sync {
                       this.flushBackgroundSyncCheckpointsNow();
                   }
               }
-          });
+          };
+          AppState.addEventListener('change', handleAppStateChange);
+          if (Platform.OS === 'android') {
+              subscribeBackgroundSyncService((running) => {
+                  handleAppStateChange(AppState.currentState);
+                  if (running && this.credentials) {
+                      this.resumeAfterForegroundTransition('Sync.backgroundService.start');
+                  }
+              });
+          }
 
           // Web: AppState events are not always reliable when tabs are backgrounded. Mirror the
           // pause/resume behavior using document visibility.
@@ -2276,11 +2288,24 @@ class Sync {
         this.revenueCatInitialized = false;
     };
 
-    public async switchServer(credentials: AuthCredentials): Promise<void> {
+    public async switchServer(credentials: AuthCredentials, options?: Readonly<{ retireManagedAccess: true }>): Promise<void> {
+        const scope = getActiveServerSnapshot();
+        if (options?.retireManagedAccess) {
+            // A paged session list cannot prove which cached sessions were revoked. Withdraw
+            // this Home's resource cache immediately; permitted resources rehydrate normally.
+            const machineIds = new Set([...Object.keys(storage.getState().machines), ...this.machineDataKeys.keys()]);
+            const oldEncryption = this.encryption;
+            for (const sessionId of Object.keys(storage.getState().sessions)) this.retireLocalSession(sessionId, scope.serverId);
+            clearWarmCachesForScope(scope.serverId, parseToken(credentials.token));
+            this.resetServerScopedRuntimeState();
+            await oldEncryption.initializeMachines(new Map(), { unavailableMachineIds: machineIds });
+        }
+        const generation = this.serverScopeGeneration;
         const encryption = await createEncryptionFromAuthCredentials(credentials);
-
-        this.resetServerScopedRuntimeState();
-        apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
+        const current = getActiveServerSnapshot();
+        if (this.serverScopeGeneration !== generation || current.serverId !== scope.serverId || current.serverUrl !== scope.serverUrl || current.generation !== scope.generation) return;
+        if (!options?.retireManagedAccess) this.resetServerScopedRuntimeState();
+        apiSocket.initialize({ endpoint: scope.serverUrl, token: credentials.token }, encryption);
         await this.restore(credentials, encryption);
     }
 
@@ -8246,6 +8271,7 @@ class Sync {
               onReadyProjectionAdvance: (sessionId, seq) => this.notifyReadyProjectionAdvance(sessionId, seq),
               assumeUsers: (userIds) => this.assumeUsers(userIds),
               applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+              onManagedAccessRevoked: () => this.switchServer(this.credentials, { retireManagedAccess: true }),
               invalidateMachines: () => this.machinesSync.invalidate(),
               invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),

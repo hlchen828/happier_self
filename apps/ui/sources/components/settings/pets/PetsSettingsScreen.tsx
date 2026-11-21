@@ -39,6 +39,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { PetsAccountLibrarySection } from './petsSettingsScreen/PetsAccountLibrarySection';
 import { PetsAccountSettingsSection } from './petsSettingsScreen/PetsAccountSettingsSection';
 import { PetsDesktopOverlaySettingsSection } from './petsSettingsScreen/PetsDesktopOverlaySettingsSection';
+import { PetsAndroidOverlaySettingsSection } from './petsSettingsScreen/PetsAndroidOverlaySettingsSection';
 import { PetsLocalLibrarySection } from './petsSettingsScreen/PetsLocalLibrarySection';
 import {
     buildImportPayload,
@@ -413,6 +414,8 @@ export function PetsSettingsScreen() {
                 petsEnabled={settings.petsEnabled}
                 petsEnabledOverride={localSettings.petsEnabledOverride}
             />
+
+            <PetsAndroidOverlaySettingsSection />
 
             <PetsLocalLibrarySection
                 builtInPetRows={builtInPetRows}

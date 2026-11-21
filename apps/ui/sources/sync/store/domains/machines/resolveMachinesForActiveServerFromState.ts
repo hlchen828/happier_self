@@ -12,7 +12,7 @@ function sortVisibleMachines(a: Machine, b: Machine): number {
     return a.id.localeCompare(b.id);
 }
 
-export function resolveVisibleMachinesForActiveServerFromState(state: any): Machine[] {
+export function resolveVisibleMachinesForActiveServerFromState(state: any, options?: Readonly<{ includeRetiredIds?: readonly string[] }>): Machine[] {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
     const machineListByServerId = state?.machineListByServerId ?? {};
     const canonicalMachinesById = state?.machines && typeof state.machines === 'object'
@@ -30,13 +30,15 @@ export function resolveVisibleMachinesForActiveServerFromState(state: any): Mach
         return canonicalMachinesById[(machine as Machine).id] ?? machine;
     });
 
+    // Administration can still revoke existing grants after their machine is retired.
+    const includedRetiredIds = new Set(options?.includeRetiredIds);
     return sourceMachines
         .filter((machine): machine is Machine => Boolean(
             machine
             && typeof machine === 'object'
             && typeof (machine as { id?: unknown }).id === 'string',
         ))
-        .filter(isVisibleMachine)
+        .filter((machine) => isVisibleMachine(machine) || includedRetiredIds.has(machine.id))
         .sort(sortVisibleMachines);
 }
 

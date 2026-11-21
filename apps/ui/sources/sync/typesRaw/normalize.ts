@@ -560,7 +560,7 @@ export function normalizeRawMessage(
                 && raw.content.data.message.content.every(block => isPlainRecord(block)
                     && block.type === 'tool_result' && typeof block.tool_use_id === 'string'
                     && typeof outputOrigin.toolUseId === 'string' && outputOrigin.toolUseId === block.tool_use_id);
-            if (raw.content.data.isMeta && !nativeTaskResult) {
+            if ((raw.content.data.isMeta === true || providers.claude.isClaudeInternalUserPrompt(outputData)) && !nativeTaskResult) {
                 return null;
             }
             // cli-v0.2.16 wrote is_error:false even for failed/stopped notifications.

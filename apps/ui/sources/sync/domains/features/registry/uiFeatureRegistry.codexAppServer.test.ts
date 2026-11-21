@@ -14,7 +14,12 @@ const CODEX_APP_SERVER_FEATURE_IDS = [
     'providers.codex.appServer.permissionProfiles',
 ] as const;
 
-describe('UI Codex app-server feature registry', () => {
+describe('runtime-only UI feature registry', () => {
+    it('does not expose deployment-managed account policy as a user preference', () => {
+        expect(shouldTrackUiFeaturePreference('accounts.machineAccess')).toBe(false);
+        expect(getUiFeatureDefinition('accounts.machineAccess').settingsToggle).toBeUndefined();
+        expect(listUiFeatureToggleDefinitions().some((definition) => definition.featureId === 'accounts.machineAccess')).toBe(false);
+    });
     it('registers Codex app-server feature ids as runtime-only UI features', () => {
         for (const featureId of CODEX_APP_SERVER_FEATURE_IDS) {
             expect(getUiFeatureDefinition(featureId).settingsToggle).toBeUndefined();

@@ -54,4 +54,4 @@ export {
   type ClaudeOauthEntitlementMetadata,
 } from './oauthProfile.js';
 
-export { isClaudeInternalEventType } from './internalEventTypes.js';
+export { isClaudeInternalEventType, isClaudeInternalUserPrompt } from './internalEventTypes.js';

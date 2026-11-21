@@ -84,6 +84,21 @@ describe("authRoutes (auth policy) (integration)", () => {
         await app.close();
     });
 
+    it("rejects uninvited account creation when a deployment administrator is configured", async () => {
+        const administrator = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        harness.resetEnv({
+            HAPPIER_ADMIN_PUBLIC_KEY: privacyKit.encodeHex(new Uint8Array(administrator.publicKey)),
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+        });
+        const { body, publicKeyHex } = createAuthBody();
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+        const response = await app.inject({ method: "POST", url: "/v1/auth", payload: body });
+        expect(response.statusCode).toBe(403);
+        expect(await db.account.findUnique({ where: { publicKey: publicKeyHex } })).toBeNull();
+    });
+
     it("returns 404 when key-challenge login is disabled", async () => {
         // With key-challenge disabled, the server must still have at least one other
         // viable login method configured to avoid a hard lockout.

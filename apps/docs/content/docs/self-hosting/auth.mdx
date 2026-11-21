@@ -58,6 +58,48 @@ Then follow the provider setup guide:
 - GitHub: [GitHub auth](/self-hosting/auth-github)
 - OIDC: [OIDC auth](/self-hosting/auth-oidc)
 
+## Administrator-managed machines (development source)
+
+This local development change adds one administrator for the deployment and independently keyed member accounts. It is not verified in a published stable or preview release. Use the matching modified server, app and CLI together; machine-allocation rules apply only when managed mode is enabled.
+
+### Enable managed mode
+
+Choose the administrator's account before opening signup. Set `HAPPIER_ADMIN_PUBLIC_KEY` to that account's 32-byte Ed25519 **signing public key**, encoded as 64 hexadecimal characters. This is not the recovery secret, content-encryption public key, or account ID. Keep the corresponding recovery material on trusted administrator devices, not on shared machines. The first person to register does not become the administrator.
+
+Configure E2EE storage and use the existing [migration procedure](/self-hosting/docker#migrations) for your database before starting the modified server:
+
+```text
+HAPPIER_ADMIN_PUBLIC_KEY=<64 hexadecimal characters>
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=required_e2ee
+```
+
+When configured, the relay advertises `accounts.machineAccess`. New non-administrator accounts require an invitation even if anonymous signup was previously enabled. Do not enable plaintext/keyless provisioning as an alternative onboarding route for this mode.
+
+### Invite members and enroll machines
+
+The administrator opens the account-management entry in settings, creates a member invitation with an expiry, and gives its token to the intended recipient through a trusted channel. On matching development servers advertising `accounts.inviteMachineAssignment`, the invitation form can also select already enrolled managed machines. When the recipient joins, those assignments are created automatically; leaving the selection empty creates a member with no assigned machines. Older servers do not show the selection control. Only managed machines can be selected, not legacy machine records.
+
+The recipient uses **Join with invitation** on the welcome screen and creates their own account keys. Invitations are single-use, expire, and can be revoked; their token is shown only when created. The relay rechecks the selected machines when the invitation is used: if a selected machine has been removed or is no longer eligible, joining fails without consuming the invitation or creating partial assignments. If the join response is lost, retry the same invitation on the same device and relay: the app retains the prepared account key before sending the request, and removes that preparation only after login credentials have been saved.
+
+Create a separate **machine invitation** for each daemon. On that machine, select the managed relay and use a new, dedicated `HAPPIER_HOME_DIR` with no administrator or member credentials:
+
+```text
+happier auth enroll --invite <machine-invitation-token> --server-url <relay-url>
+happier daemon start
+```
+
+Use the same data directory and relay selection when starting the daemon. Enrollment refuses to overwrite existing credentials. Before contacting the relay it retains the new machine's signing identity in that private data directory, so a lost auth response or temporary role-check failure can be retried with the same invitation and directory without losing an already created account. Treat invitation tokens as secrets and avoid recording them in shared shell history or support logs. Do not use device pairing or copy the administrator's credential directory to enroll a shared machine.
+
+From a member's management screen, add or remove machine assignments, including those created from an invitation. Several members can share the same machine. The daemon seals the machine and its session keys separately for each authorized account. Invitation selection does not put device keys into the invitation or bypass this delivery step. A grant stays pending while the key holder is offline or delivery fails; bring the daemon online or reconnect it to retry. Historical sessions already bound to that managed machine and newly created sessions receive their own envelopes. Existing independent-account machines and unbound legacy sessions are not automatically converted by the schema migration.
+
+Once key delivery is ready, a member has the same business permissions as the administrator on an assigned machine, including creating and operating sessions, terminal and file access, and stopping, archiving or deleting sessions. The member cannot use an unassigned machine. Account administration, member invitations and machine assignment remain administrator-only, and accounts do not share login credentials. The app stops a running session before archiving or deleting it; deletion still requires confirmation.
+
+### Revocation and the trust boundary
+
+Removing a grant stops subsequent Happier access to that machine and its sessions; disabling a member removes their managed access. Neither operation automatically terminates already running jobs. Members cannot enroll another machine, create invitations, manage grants or re-share managed sessions to bypass allocation.
+
+Full terminal and file access makes a member trusted on the machine itself. Revocation cannot recover copied content or old keys, and cannot remove programs someone installed through terminal access. This is Happier access control, not operating-system user isolation. Do not store administrator credentials or unrelated secrets on shared machines.
+
 ## Standard authentication (device-key accounts)
 
 Happier uses a **device-key** account model (each account is tied to a device secret).

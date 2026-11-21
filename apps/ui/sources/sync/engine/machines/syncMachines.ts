@@ -140,6 +140,8 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
         activeAt: machineUpdate.activeAt ?? existingMachine?.activeAt ?? updateCreatedAt,
         revokedAt: nextRevokedAt,
         ...readReplacementFieldsFromSocketUpdate(machineUpdate, existingMachine),
+        managed: existingMachine?.managed,
+        managedAccessStatus: existingMachine?.managedAccessStatus,
         metadata: existingMachine?.metadata ?? null,
         metadataVersion: existingMachine?.metadataVersion ?? 0,
         daemonState: existingMachine?.daemonState ?? null,
@@ -285,6 +287,8 @@ export async function fetchAndApplyMachines(params: {
         daemonState?: string | null;
         daemonStateVersion?: number;
         dataEncryptionKey?: string | null; // Add support for per-machine encryption keys
+        managed?: boolean;
+        managedAccessStatus?: Machine['managedAccessStatus'];
         seq: number;
         active: boolean;
         activeAt: number; // Changed from lastActiveAt
@@ -343,6 +347,14 @@ export async function fetchAndApplyMachines(params: {
     // between chunks.
     const machineKeysMap = new Map<string, Uint8Array | null>();
     const unavailableMachineIds = new Set<string>();
+    if (params.replace) {
+        const visibleIds = new Set(machines.map((machine) => machine.id));
+        for (const machineId of machineDataKeys.keys()) {
+            if (visibleIds.has(machineId)) continue;
+            machineDataKeys.delete(machineId);
+            unavailableMachineIds.add(machineId);
+        }
+    }
     const plainMachineIds = new Set<string>();
     const readMachineEnvelope = (machine: { dataEncryptionKey?: string | null }): string | null =>
         typeof machine.dataEncryptionKey === 'string' && machine.dataEncryptionKey.length > 0
@@ -352,6 +364,13 @@ export async function fetchAndApplyMachines(params: {
     const envelopeMachineIds: string[] = [];
     const envelopes: string[] = [];
     for (const machine of machines) {
+        // Managed resources never fall back to the account's legacy encryption key.
+        if (machine.managedAccessStatus === 'pending' ||
+            (machine.managedAccessStatus === 'ready' && !readMachineEnvelope(machine))) {
+            machineDataKeys.delete(machine.id);
+            unavailableMachineIds.add(machine.id);
+            continue;
+        }
         if (isPlainMachineDataKeyMarker(machine.dataEncryptionKey)) {
             machineDataKeys.delete(machine.id);
             if (accountAllowsPlainMachines) {
@@ -453,8 +472,10 @@ export async function fetchAndApplyMachines(params: {
         activeAt: machine.activeAt,
         revokedAt: machine.revokedAt ?? null,
         ...readReplacementFieldsFromMachineRow(machine),
+        managed: machine.managed,
+        managedAccessStatus: machine.managedAccessStatus,
         metadataVersion: machine.metadataVersion,
-        metadata: cachedEntry?.metadataVersion === machine.metadataVersion
+        metadata: !unavailableMachineIds.has(machine.id) && cachedEntry?.metadataVersion === machine.metadataVersion
             ? {
                 displayName: cachedEntry.displayName ?? null,
                 host: cachedEntry.host ?? null,
@@ -483,6 +504,8 @@ export async function fetchAndApplyMachines(params: {
             activeAt: machine.activeAt,
             revokedAt: machine.revokedAt ?? null,
             ...readReplacementFieldsFromMachineRow(machine),
+            managed: machine.managed,
+            managedAccessStatus: machine.managedAccessStatus,
             metadataVersion: metadata && existingMachine ? existingMachine.metadataVersion : machine.metadataVersion,
             metadata,
             daemonState: hasEncryptedDaemonState && canReadMachine ? existingMachine?.daemonState ?? null : null,
@@ -507,6 +530,8 @@ export async function fetchAndApplyMachines(params: {
                 activeAt: machine.activeAt,
                 revokedAt: machine.revokedAt ?? null,
                 ...readReplacementFieldsFromMachineRow(machine),
+                managed: machine.managed,
+                managedAccessStatus: machine.managedAccessStatus,
                 metadata: null,
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,
@@ -531,6 +556,8 @@ export async function fetchAndApplyMachines(params: {
                 activeAt: machine.activeAt,
                 revokedAt: machine.revokedAt ?? null,
                 ...readReplacementFieldsFromMachineRow(machine),
+                managed: machine.managed,
+                managedAccessStatus: machine.managedAccessStatus,
                 metadata,
                 metadataVersion: machine.metadataVersion,
                 daemonState,
@@ -547,6 +574,8 @@ export async function fetchAndApplyMachines(params: {
                 activeAt: machine.activeAt,
                 revokedAt: machine.revokedAt ?? null,
                 ...readReplacementFieldsFromMachineRow(machine),
+                managed: machine.managed,
+                managedAccessStatus: machine.managedAccessStatus,
                 metadata: null,
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,

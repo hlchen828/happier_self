@@ -1,0 +1,7 @@
+{
+  "name": "happier-pet-overlay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "User-started Android pet overlay presentation for the existing app runtime.",
+  "files": ["android", "expo-module.config.json"]
+}

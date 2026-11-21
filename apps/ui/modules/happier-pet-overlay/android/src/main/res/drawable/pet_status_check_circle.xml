@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phosphor CheckCircle, regular (MIT), matching the app Icon registry. Tint comes from the JS theme payload. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="14dp" android:height="14dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+    <path android:fillColor="@android:color/black"
+        android:pathData="M173.66,98.34a8,8 0,0 1,0 11.32l-56,56a8,8 0,0 1,-11.32 0l-24,-24a8,8 0,0 1,11.32 -11.32L112,148.69l50.34,-50.35a8,8 0,0 1,11.32 0M232,128A104,104 0,1 1,128 24a104.11,104.11 0,0 1,104 104m-16,0a88,88 0,1 0,-88 88 88.1,88.1 0,0 0,88 -88" />
+</vector>

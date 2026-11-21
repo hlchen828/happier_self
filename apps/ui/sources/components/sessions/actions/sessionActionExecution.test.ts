@@ -77,11 +77,12 @@ describe('delete eligibility at execution', () => {
         vi.restoreAllMocks();
     });
 
-    it('stops a running session once and waits for inactivity before deleting it', async () => {
+    it.each([undefined, 'admin'] as const)('stops a running session with owner or %s access once and waits for inactivity before deleting it', async (accessLevel) => {
         const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete.example' }).id;
         setActiveServerId(serverId);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
-        const session = createSessionFixture({ id: 'stop-then-delete', serverId, active: true, presence: 'online', metadata: { path: '/tmp/project', host: 'local' } });
+        const session = createSessionFixture({ id: 'stop-then-delete', serverId, active: true, presence: 'online', accessLevel,
+            ...(accessLevel ? { owner: 'another_owner' } : {}), metadata: { path: '/tmp/project', host: 'local' } });
         storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
         // Session RPC and HTTP are transport boundaries; the strategy, flow and store stay real.
         const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
@@ -96,6 +97,66 @@ describe('delete eligibility at execution', () => {
         expect(stop).toHaveBeenCalledTimes(1);
         expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
         expect(storage.getState().sessions[session.id]).toBeUndefined();
+    });
+
+    it.each([SESSION_ACTION_STOP_ID, SESSION_ACTION_ARCHIVE_ID] as const)('runs %s for a shared admin through the real stop strategy', async (actionId) => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://admin-stop.example' }).id;
+        setActiveServerId(serverId);
+        const session = createSessionFixture({ id: 'admin-stop', serverId, active: true, presence: 'online', archivedAt: null,
+            owner: 'another_owner', accessLevel: 'admin', metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        function request(path: string, options?: RequestInit): Promise<Response>;
+        function request<T>(path: string, options: RequestInit | undefined, consume: (response: Response) => Promise<T>): Promise<T>;
+        async function request<T>(_path: string, _options?: RequestInit, consume?: (response: Response) => Promise<T>): Promise<Response | T> {
+            const response = storage.getState().sessions[session.id]?.active
+                ? Response.json({ error: 'session-active' }, { status: 409 })
+                : Response.json({ success: true, archivedAt: 123 });
+            return consume ? await consume(response) : response;
+        }
+        const archive = vi.spyOn(apiSocket, 'request').mockImplementation(request);
+        const target = createSessionActionTarget({ session, serverId, isConnected: true });
+        expect(target.canStop).toBe(true);
+        expect(target.canArchive).toBe(true);
+        const result = executeSessionAction({ actionId, target });
+        const outcome = result.then(() => null, (error: unknown) => error);
+        await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+        expect(storage.getState().sessions[session.id]?.archivedAt).toBeNull();
+        storage.setState({ sessions: { [session.id]: { ...session, active: false, presence: 0 } } });
+        expect(await outcome).toBeNull();
+        if (actionId === SESSION_ACTION_ARCHIVE_ID) {
+            expect(storage.getState().sessions[session.id]?.archivedAt).toBe(123);
+        } else {
+            expect(archive).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(['confirmation', 'stop'] as const)('rejects shared-admin deletion after permission is lost during %s', async (phase) => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://admin-revoked.example' }).id;
+        setActiveServerId(serverId);
+        const session = createSessionFixture({ id: 'admin-revoked', serverId, active: true, presence: 'online',
+            owner: 'another_owner', accessLevel: 'admin', metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        const revoke = () => storage.setState({ sessions: { [session.id]: { ...session, active: false, presence: 0, accessLevel: 'edit' } } });
+        if (phase === 'confirmation') {
+            vi.mocked(Modal.confirm).mockImplementationOnce(async () => { revoke(); return true; });
+        }
+        const target = createSessionActionTarget({ session, serverId, isConnected: true });
+        expect(target.canStopAndDelete).toBe(true);
+        const result = executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target });
+        const outcome = result.then(() => null, (error: unknown) => error);
+        if (phase === 'stop') {
+            await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+            revoke();
+        }
+        expect(await outcome).toBeInstanceOf(HappyError);
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        expect(storage.getState().sessions[session.id]).toBeDefined();
+        if (phase === 'confirmation') expect(stop).not.toHaveBeenCalled();
     });
 
     it('cancels deletion before sending a stop request', async () => {

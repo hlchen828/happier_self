@@ -36,8 +36,14 @@ export function resolveSessionEncryptionContext(credential: Credentials): Encryp
   return { encryptionKey, encryptionVariant, dataEncryptionKey };
 }
 
-export function resolveMachineEncryptionContext(credential: Credentials): EncryptionContext {
+export function resolveMachineEncryptionContext(
+  credential: Credentials,
+  options: Readonly<{ independentResourceKey?: boolean }> = {},
+): EncryptionContext {
   requireEncryptionCredentials(credential);
+  if (options.independentResourceKey && credential.encryption.type !== 'dataKey') {
+    throw new Error('Managed machines require an independent content-key identity. Enroll this machine with an invitation.');
+  }
   // Resolve encryption key
   let dataEncryptionKey: Uint8Array | null = null;
   let encryptionKey: Uint8Array;
@@ -46,9 +52,10 @@ export function resolveMachineEncryptionContext(credential: Credentials): Encryp
   if (credential.encryption.type === 'dataKey') {
     // Encrypt data encryption key
     encryptionVariant = 'dataKey';
-    encryptionKey = credential.encryption.machineKey;
+    // Sharing a managed machine must never disclose its identity's private key.
+    encryptionKey = options.independentResourceKey ? getRandomBytes(32) : credential.encryption.machineKey;
     dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({
-      dataKey: credential.encryption.machineKey,
+      dataKey: encryptionKey,
       recipientPublicKey: credential.encryption.publicKey,
       randomBytes: getRandomBytes,
     });

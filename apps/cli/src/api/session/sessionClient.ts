@@ -2704,14 +2704,14 @@ export class ApiSessionClient extends EventEmitter {
         ) {
             return;
         }
+        const accountSettingsBody = data.body?.t === 'update-account' ? data.body : null;
         const isAccountSettingsUpdate = opts.source === 'user-scoped'
-            && data.body?.t === 'update-account'
-            && data.body.settingsV2 !== null
-            && data.body.settingsV2 !== undefined;
+            && accountSettingsBody?.settingsV2 !== null
+            && accountSettingsBody?.settingsV2 !== undefined;
         const isAccountSettingsHint = opts.source === 'user-scoped'
             && data.body?.t === 'account-settings-changed';
         const parsedAccountSettingsUpdate = isAccountSettingsUpdate
-            ? AccountSettingsV2GetResponseSchema.safeParse(data.body.settingsV2)
+            ? AccountSettingsV2GetResponseSchema.safeParse(accountSettingsBody?.settingsV2)
             : null;
         const accountSettingsUpdate = parsedAccountSettingsUpdate?.success
             ? parsedAccountSettingsUpdate.data
@@ -2723,7 +2723,7 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         const rawSettingsVersion = isAccountSettingsUpdate
-            ? (data.body.settingsV2 as { version?: unknown }).version
+            ? accountSettingsBody?.settingsV2?.version
             : data.body.t === 'account-settings-changed'
                 ? data.body.settingsVersion
                 : null;

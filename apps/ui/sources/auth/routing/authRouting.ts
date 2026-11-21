@@ -24,8 +24,8 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // The transparent desktop pet overlay window is shell-owned and must not be redirected into setup.
     if (first === 'desktop' && normalized[1] === 'pet-overlay') return true;
 
-    // Restore / link account flows must work unauthenticated.
-    if (first === 'restore') return true;
+    // Restore / invitation enrollment flows must work before independent-account authentication.
+    if (first === 'restore' || first === 'join') return true;
 
     // OAuth return routes must be reachable before authentication so the callback can finalize.
     if (first === 'oauth') return true;

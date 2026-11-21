@@ -982,3 +982,25 @@ native build before publishing an OTA update for this train.
 React Native's CocoaPods post-install owner marks glog's namespace-fragment
 headers textual, so Swift can import Nitro's public Fabric headers without
 Clang attempting a submodule import inside `namespace google`.
+
+### Session-admin lifecycle controls (development)
+
+The development UI and relay allow session `admin` recipients to stop, archive and
+permanently delete their authorized session, including ordinary direct shares.
+Managed members use the same session access level once assigned-machine key delivery
+is ready; deployment account management and machine allocation remain administrator-only.
+No role value, HTTP path, encryption envelope or socket authorization shape changes.
+
+The inspected `server-v0.2.20` source at
+`282a8fc3f999df1d104b78daa489317e65d395a6` only deletes sessions for their owner.
+Its DELETE 404 does not distinguish owner denial from absence, while its exact
+`GET /v2/sessions/:sessionId` returns `Session not found` for absence. Updated
+clients verify that exact read with the captured credentials before retiring a row
+on the ambiguous DELETE 404; a still-accessible session or failed read stays visible.
+Stopping and deleting a non-owned ordinary share requires the updated relay. An
+older relay may reject these operations without affecting ordinary owner operations.
+
+Existing clients keep their original owner controls against the updated relay.
+This is source-contract evidence, not live old/new deployment certification. The
+updated app and relay are required for the newly available admin controls; no
+persisted-data migration or fleet-wide client rejection is introduced.

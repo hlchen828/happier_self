@@ -14,6 +14,7 @@ import { registerWorkspaceAnchorHandlers } from '@/rpc/handlers/workspaceAnchors
 import { registerWorkspaceFaviconHandlers } from '@/rpc/handlers/workspaceFavicon/registerWorkspaceFaviconHandlers';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { decodeMachineStoredContent, encodeMachineStoredContent } from './machine/machineStoredContent';
+import { startManagedMachineKeyDelivery } from './machine/managedMachineKeyDelivery';
 import {
     resolveFilesystemAccessPolicy,
     type FilesystemAccessPolicy,
@@ -174,6 +175,7 @@ function isMachineReplacedSocketError(error: unknown, diagnostic: Record<string,
 }
 
 export class ApiMachineClient {
+    private readonly managedKeyDelivery: ReturnType<typeof startManagedMachineKeyDelivery> | null;
     private onContentKeyChanged: (() => void) | undefined;
     private readonly connectedServiceImportAccount: ApiMachineClientDeps['connectedServiceImportAccount'];
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
@@ -336,6 +338,9 @@ export class ApiMachineClient {
     ) {
         this.ownershipMetadata = ownershipMetadata ?? {};
         this.connectedServiceImportAccount = deps?.connectedServiceImportAccount;
+        this.managedKeyDelivery = machine.managed && deps?.connectedServiceImportAccount
+            ? startManagedMachineKeyDelivery({ client: this, machine, credentials: deps.connectedServiceImportAccount.credentials })
+            : null;
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
             scopePrefix: this.machine.id,
@@ -1029,6 +1034,7 @@ export class ApiMachineClient {
     async shutdown() {
         logger.debug('[API MACHINE] Shutting down');
         this.projectionSchedulingClosed = true;
+        await this.managedKeyDelivery?.close();
         this.activeTransportGeneration += 1;
         this.teardownActiveSocket();
         this.connectedServicesProjectionRetry.close();
@@ -1060,6 +1066,7 @@ export class ApiMachineClient {
         this.activeTransportGeneration += 1;
         this.teardownActiveSocket();
         void this.connectionSupervisor?.stop();
+        void this.managedKeyDelivery?.close();
         this.onContentKeyChanged?.();
         return true;
     }

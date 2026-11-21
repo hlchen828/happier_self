@@ -105,7 +105,7 @@ async function executeDeleteAction(target: SessionActionTarget, context?: Sessio
         await stopSessionAndRunAction({
             stopSession: async () => {
                 const current = readCurrentSessionActionTarget(target);
-                if (!current?.isOwnedByCurrentUser) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
+                if (!current?.hasAdminAccess) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
                 if (current.canDelete) return { success: true };
                 let result: SessionActionOperationResult;
                 try {
@@ -127,7 +127,7 @@ async function executeDeleteAction(target: SessionActionTarget, context?: Sessio
                 run: async (options) => {
                     if (sessionMissing) return { success: true };
                     const current = readCurrentSessionActionTarget(target);
-                    if (!current?.isOwnedByCurrentUser) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
+                    if (!current?.hasAdminAccess) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
                     if (!current.canDelete) return { success: false, code: 'session_active' };
                     return await deleteSession(target.sessionId, { serverId: target.serverId, ...options });
                 },

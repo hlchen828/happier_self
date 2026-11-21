@@ -2245,7 +2245,7 @@ describe('/session/[id]/info', () => {
         }
     });
 
-    it('does not offer archive for active shared sessions even when the viewer has admin access', async () => {
+    it('offers stop, archive and delete for active shared sessions with admin access', async () => {
         mockServerId = 'server-b';
         mockSession = {
             id: 'session-1',
@@ -2260,7 +2260,9 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
 
-        expect(screen.findByTestId('sessionInfo.archiveSession')).toBeNull();
+        expect(screen.findByTestId('sessionInfo.stopSession')).not.toBeNull();
+        expect(screen.findByTestId('sessionInfo.archiveSession')).not.toBeNull();
+        expect(screen.findByTestId('sessionInfo.deleteSession')).not.toBeNull();
     });
 
     it.each(['view', 'edit'] as const)('hides rename quick action for %s shared sessions', async (accessLevel) => {

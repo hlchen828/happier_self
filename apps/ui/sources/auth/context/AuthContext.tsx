@@ -5,7 +5,7 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { clearPersistence, loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { trackLogout } from '@/track';
-import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, subscribeActiveServer, type ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -21,6 +21,7 @@ interface AuthContextType {
      */
     authenticatedThisRun: boolean;
     credentials: AuthCredentials | null;
+    credentialsScope?: ActiveServerSnapshot | null;
     login: (token: string, secret: string) => Promise<void>;
     loginWithCredentials: (credentials: AuthCredentials) => Promise<void>;
     logout: () => Promise<void>;
@@ -33,10 +34,12 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     const [isAuthenticated, setIsAuthenticated] = useState(!!initialCredentials);
     const [authenticatedThisRun, setAuthenticatedThisRun] = useState(false);
     const [credentials, setCredentials] = useState<AuthCredentials | null>(initialCredentials);
+    const [credentialsScope, setCredentialsScope] = useState<ActiveServerSnapshot | null>(() => initialCredentials ? getActiveServerSnapshot() : null);
     const activeServerKeyRef = React.useRef<string | null>(null);
     const applyLocalSettings = useApplyLocalSettings();
 
     const loginWithCredentials = React.useCallback(async (newCredentials: AuthCredentials) => {
+        const scope = getActiveServerSnapshot();
         let resetPendingArchives = false;
         if (credentials) {
             try {
@@ -62,7 +65,12 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (!loadLocalSettings().hasCompletedAuthOnce) {
             applyLocalSettings({ hasCompletedAuthOnce: true });
         }
+        const currentScope = getActiveServerSnapshot();
+        if (currentScope.serverId !== scope.serverId || currentScope.serverUrl !== scope.serverUrl || currentScope.generation !== scope.generation) {
+            throw new Error('Authentication server changed while saving credentials');
+        }
         setCredentials(newCredentials);
+        setCredentialsScope(scope);
         setIsAuthenticated(true);
         setAuthenticatedThisRun(true);
         await syncSwitchServer(newCredentials);
@@ -97,12 +105,17 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         stopConcurrentSessionCacheSync();
         await syncLogout();
         setCredentials(null);
+        setCredentialsScope(null);
         setIsAuthenticated(false);
     }, []);
 
     const refreshFromActiveServer = React.useCallback(async () => {
+        const scope = getActiveServerSnapshot();
         const nextCredentials = await switchConnectionToActiveServer();
+        const currentScope = getActiveServerSnapshot();
+        if (currentScope.serverId !== scope.serverId || currentScope.serverUrl !== scope.serverUrl || currentScope.generation !== scope.generation) return;
         setCredentials(nextCredentials);
+        setCredentialsScope(nextCredentials ? scope : null);
         setIsAuthenticated(Boolean(nextCredentials));
     }, []);
 
@@ -114,11 +127,12 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         isAuthenticated,
         authenticatedThisRun,
         credentials,
+        credentialsScope,
         login,
         loginWithCredentials,
         logout,
         refreshFromActiveServer,
-    }), [isAuthenticated, authenticatedThisRun, credentials, login, loginWithCredentials, logout, refreshFromActiveServer]);
+    }), [isAuthenticated, authenticatedThisRun, credentials, credentialsScope, login, loginWithCredentials, logout, refreshFromActiveServer]);
 
     // Update global auth state when local state changes
     useEffect(() => {

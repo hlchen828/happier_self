@@ -6,9 +6,12 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
+  resolveApiSessionSocketDefaultAck,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import type { UsageReportV1 } from './acpTokenCountUsageReport';
+import { SDKToLogConverter } from '@/backends/claude/utils/sdkToLogConverter';
+import { conversionContext } from '@/backends/claude/utils/sdkToLogConverter.testkit';
 
 type Ack = { ok: true; id: string; seq: number; localId: string; didWrite?: boolean };
 
@@ -183,6 +186,86 @@ describe('ApiSessionClient message commit queue', () => {
         messageRole: 'user',
         message: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Keep this prompt visible' } } },
       });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it.each([
+    { source: 'sdk', flags: { isMeta: true } },
+    { source: 'sdk', flags: { isSynthetic: true } },
+    { source: 'raw', flags: { isMeta: true } },
+    { source: 'raw', flags: { isSynthetic: true } },
+  ] as const)('commits internal Skill instructions as output rather than user text (%j)', async ({ source, flags }) => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true,
+      emitWithAckResult: { ok: true, id: 'skill-prompt-row', seq: 1, localId: 'claude-jsonl:main:user:skill-prompt', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    // Matches the pictured native JSONL shape: metadata text with no synthetic flag.
+    const content = [{ type: 'text', text: 'Base directory for this skill: /test/skills/example\n\nInternal skill instructions' }];
+    const rawMessage = {
+      type: 'user', uuid: 'skill-prompt', ...flags, isSidechain: false,
+      userType: 'external', sourceToolUseID: 'skill-tool', message: { role: 'user', content },
+    } as const;
+    const message = source === 'sdk' ? new SDKToLogConverter(conversionContext).convert(rawMessage) : rawMessage;
+    try {
+      if (!message) throw new Error('Expected internal Skill log message');
+      await client.sendClaudeSessionMessageCommittedExact(message);
+      const payload = sessionSocketStub.emitWithAck.mock.calls.find(([event]) => event === 'message')?.[1];
+      expect(payload).toMatchObject({
+        message: { t: 'plain', v: { role: 'agent', content: { type: 'output', data: {
+          type: 'user', ...(source === 'sdk' ? { isMeta: true } : flags), message: { content },
+        } } } },
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('preserves repeated Skill calls, synthetic results, and unmarked Skill-like human text', async () => {
+    vi.resetModules();
+    let seq = 0;
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event !== 'message') return resolveApiSessionSocketDefaultAck(event, payload);
+      const request = payload as { localId: string };
+      return { ok: true, id: request.localId, seq: ++seq, localId: request.localId, didWrite: true };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const converter = new SDKToLogConverter(conversionContext);
+    const text = 'Base directory for this skill: /test/skills/example\n\nPlease explain these instructions';
+    try {
+      for (const id of ['skill-1', 'skill-2']) {
+        const call = converter.convert({ type: 'assistant', uuid: `${id}-call`, message: { role: 'assistant', content: [
+          { type: 'tool_use', id, name: 'Skill', input: { skill: 'example' } },
+        ] } });
+        const result = converter.convert({ type: 'user', uuid: `${id}-result`, isSynthetic: true, message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: id, content: 'Skill tool outcome', is_error: id === 'skill-2' },
+          { type: 'text', text: 'Result context' },
+        ] } });
+        if (!call || !result) throw new Error('Expected Skill call and result');
+        await client.sendClaudeSessionMessageCommittedExact(call);
+        await client.sendClaudeSessionMessageCommittedExact(result);
+      }
+      await client.sendClaudeSessionMessageCommittedExact({ type: 'user', uuid: 'unmarked-skill-text', message: { content: text } });
+      const messages = sessionSocketStub.emitWithAck.mock.calls.filter(([event]) => event === 'message').map(([, payload]) => payload);
+      expect(messages).toHaveLength(5);
+      for (const [index, id] of ['skill-1', 'skill-2'].entries()) {
+        expect(messages[index * 2]).toMatchObject({ message: { t: 'plain', v: { role: 'agent', content: { type: 'output', data: {
+          message: { content: [{ type: 'tool_use', id, name: 'Skill', input: { skill: 'example' } }] },
+        } } } } });
+        expect(messages[index * 2 + 1]).toMatchObject({ message: { t: 'plain', v: { role: 'agent', content: { type: 'output', data: {
+          message: { content: [
+            { type: 'tool_result', tool_use_id: id, content: 'Skill tool outcome', is_error: id === 'skill-2' },
+            { type: 'text', text: 'Result context' },
+          ] },
+        } } } } });
+        expect(messages[index * 2 + 1].message.v.content.data.isMeta).not.toBe(true);
+      }
+      expect(messages[4]).toMatchObject({ message: { t: 'plain', v: { role: 'user', content: { type: 'text', text } } } });
     } finally {
       await client.close();
     }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
@@ -7,6 +7,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { SidebarExpandIcon } from './SidebarIcons';
+import { IconAction } from '@/components/ui/buttons/IconAction';
 import { SidebarLogoButton } from './SidebarLogoButton';
 import {
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_HORIZONTAL_PADDING_PX,
@@ -14,6 +15,7 @@ import {
     DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
 } from './desktopChrome/desktopChromeMetrics';
 import { DesktopShellWindowControlsHost } from './desktopChrome/DesktopShellWindowControlsHost';
+import { desktopSidebarChromeStyles } from './desktopChrome/desktopSidebarChromeStyles';
 import { useResolvedDesktopWindowControls } from './desktopChrome/useResolvedDesktopWindowControls';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -131,24 +133,23 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                     buttonSize={32}
                     iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
                 />
-                {Platform.OS === 'web' ? (
-                    <Pressable
-                        testID="sidebar-expand-button"
-                        onPress={handleExpand}
-                        style={styles.button}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.expand')}
-                    >
-                        {/* The rail IS the collapsed state, so this button expands. It used to
-                            take the collapse glyph and the component's default size, which made it
-                            both the wrong icon and a different size from the same control in the
-                            expanded chrome. */}
-                        <SidebarExpandIcon
-                            size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
-                            color={theme.colors.chrome.header.foreground}
-                        />
-                    </Pressable>
-                ) : null}
+                <IconAction
+                    testID="sidebar-expand-button"
+                    onPress={handleExpand}
+                    style={Platform.OS === 'web' ? styles.button : desktopSidebarChromeStyles.touchToggleButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.expand')}
+                    size="sm"
+                >
+                    {/* The rail IS the collapsed state, so this button expands. It used to
+                        take the collapse glyph and the component's default size, which made it
+                        both the wrong icon and a different size from the same control in the
+                        expanded chrome. */}
+                    <SidebarExpandIcon
+                        size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                        color={theme.colors.chrome.header.foreground}
+                    />
+                </IconAction>
             </View>
         </View>
     );

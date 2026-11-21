@@ -48,6 +48,17 @@ describe('classifySessionForkRpcOutcome', () => {
         } as any)).toEqual({ type: 'unknown', errorCode: 'UNEXPECTED' });
     });
 
+    it('reports a managed creation preflight rejection as a definite failure rather than a possibly created fork', () => {
+        expect(classifySessionForkRpcOutcome({
+            ok: false,
+            errorCode: 'INVALID_REQUEST',
+            errorMessage: 'Managed session creation requires the enrolled machine id.',
+        })).toEqual({
+            type: 'failed', kind: 'error', errorCode: 'INVALID_REQUEST',
+            message: 'Managed session creation requires the enrolled machine id.',
+        });
+    });
+
     it('treats a daemon domain rejection as a definite failure', () => {
         expect(classifySessionForkRpcOutcome({
             ok: false,

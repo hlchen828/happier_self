@@ -31,6 +31,8 @@ describe('mapClaudeJsonlLineToDirectMessages', () => {
 
   it.each([
     { isMeta: true, message: { content: [{ type: 'text', text: 'Internal prompt' }] } },
+    { isSynthetic: true, message: { content: [{ type: 'text', text: 'Internal prompt' }] } },
+    { isSynthetic: true, message: { content: 'Internal prompt' } },
     { isSidechain: true, message: { content: [{ type: 'text', text: 'Subagent prompt' }] } },
     { message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Result' }, { type: 'text', text: 'Context' }] } },
     { message: { content: [{ type: 'image', source: { type: 'base64', data: 'image' } }, { type: 'text', text: 'Caption' }] } },
