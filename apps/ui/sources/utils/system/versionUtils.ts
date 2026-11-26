@@ -19,12 +19,25 @@ export const MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION = '0.2.10-dev.41';
 export const MINIMUM_CLI_SOURCE_CONTEXT_SPAWN_VERSION = '0.2.10-dev.76';
 // First CLI build whose strict session-fork request schema accepts requestId.
 export const MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION = '0.2.10-dev.41';
+/** SemVer build metadata identifies the artifact but does not affect version precedence. */
+function stripVersionBuildMetadata(version: string): string {
+    const trimmed = String(version ?? '').trim();
+    const metadataIndex = trimmed.indexOf('+');
+    if (metadataIndex === -1) return trimmed;
+
+    const metadata = trimmed.slice(metadataIndex + 1);
+    if (!/^[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/.test(metadata)) {
+        throw new Error('Invalid version build metadata');
+    }
+    return trimmed.slice(0, metadataIndex);
+}
+
 function normalizeComparableVersion(version: string): {
     baseParts: number[];
     prereleaseChannel: 'dev' | 'preview' | null;
     prereleaseNumbers: number[];
 } {
-    const trimmed = String(version ?? '').trim();
+    const trimmed = stripVersionBuildMetadata(version);
     if (!trimmed) throw new Error('Invalid version');
     const [baseVersion, rawSuffix = ''] = trimmed.split('-', 2);
     const baseParts = baseVersion.split('.').map(Number);
@@ -142,7 +155,7 @@ export function supportsSessionForkRequestId(daemonCliVersion?: string | null): 
  */
 export function parseVersion(version: string): { major: number; minor: number; patch: number } | null {
     try {
-        const cleanVersion = version.split('-')[0];
+        const cleanVersion = stripVersionBuildMetadata(version).split('-')[0];
         const [major, minor, patch] = cleanVersion.split('.').map(Number);
         
         if (isNaN(major) || isNaN(minor) || isNaN(patch)) {

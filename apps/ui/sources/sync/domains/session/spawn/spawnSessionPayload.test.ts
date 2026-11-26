@@ -166,19 +166,19 @@ describe('buildSpawnHappySessionRpcParams', () => {
         }));
     });
 
-    it('carries first-input authority on the daemon spawn wire', () => {
-        const compatibilityInput = {
+    it.each(['0.2.20', '0.2.20+fourfixes.20261121'])('preserves launch identity and first-input authority on the compatible %s daemon wire', (daemonCliVersion) => {
+        const options = {
             machineId: 'machine-1',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' } as const,
             pendingFirstInput: {
                 text: '  preserve this exact prompt  ',
                 localId: 'first-turn-123',
                 meta: { profileId: 'profile-1' },
             },
             spawnNonce: ' spawn-nonce-opaque ',
-        } as unknown as Parameters<typeof buildSpawnHappySessionRpcParams>[0];
-        const params = buildSpawnHappySessionRpcParams(compatibilityInput);
+        };
+        const params = buildCompatibleSpawnHappySessionRpcParams({ options, daemonCliVersion });
 
         expect(params).toEqual(expect.objectContaining({
             spawnNonce: ' spawn-nonce-opaque ',

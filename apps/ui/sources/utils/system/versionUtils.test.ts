@@ -7,6 +7,8 @@ import {
     MINIMUM_CLI_VERSION,
     MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
     MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION,
+    MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION,
+    supportsSessionForkRequestId,
 } from './versionUtils';
 
 describe('versionUtils', () => {
@@ -33,6 +35,23 @@ describe('versionUtils', () => {
             expect(() => compareVersions('0.10.1-1', '0.10.0')).toThrow();
         });
 
+        it.each([
+            ['0.2.20+fourfixes.20261121', '0.2.20', 0],
+            ['0.2.20+fourfixes.20261121', '0.2.21+build.9', -1],
+            ['0.2.21+build.9', '0.2.20+fourfixes.20261121', 1],
+            ['0.2.20-dev.41+build.9', '0.2.20-dev.41', 0],
+            ['0.2.20-preview.2+build-9', '0.2.20-dev.41+build.9', 1],
+            ['0.2.20+build.9', '0.2.20-preview.2+build.9', 1],
+        ] as const)('ignores build metadata when comparing %s to %s', (version, minimum, expected) => {
+            expect(compareVersions(version, minimum)).toBe(expected);
+        });
+
+        it.each(['0.2.20+', '0.2.20+build..9', '0.2.20+build_9', '0.2.20+build+9'])('rejects malformed build metadata in %s', (version) => {
+            expect(() => compareVersions(version, '0.2.20')).toThrow();
+            expect(getVersionSupportState(version)).toBe('unknown');
+            expect(parseVersion(version)).toBeNull();
+        });
+
         it('orders stable builds after prerelease channels on the same base version', () => {
             expect(compareVersions('0.1.0', '0.1.0-dev.0')).toBe(1);
             expect(compareVersions('0.1.0-dev.1775063171.91734', '0.1.0-dev.0')).toBe(1);
@@ -52,6 +71,15 @@ describe('versionUtils', () => {
             expect(isVersionSupported('0.10.1', '0.10.0')).toBe(true);
             expect(isVersionSupported('0.9.9', '0.10.0')).toBe(false);
             expect(isVersionSupported('1.0.0', '0.10.0')).toBe(true);
+        });
+
+        it('recognizes the custom CLI for compatibility and spawn/fork capability gates', () => {
+            const customVersion = '0.2.20+fourfixes.20261121';
+            expect(getVersionSupportState(customVersion)).toBe('supported');
+            expect(isVersionSupported(customVersion)).toBe(true);
+            expect(isVersionSupported(customVersion, MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION)).toBe(true);
+            expect(supportsSessionForkRequestId(customVersion)).toBe(true);
+            expect(isVersionSupported('0.0.9+build.1')).toBe(false);
         });
 
         it('should handle undefined version', () => {
@@ -82,6 +110,10 @@ describe('versionUtils', () => {
             expect(parseVersion('1.2.3')).toEqual({ major: 1, minor: 2, patch: 3 });
             expect(parseVersion('0.10.0')).toEqual({ major: 0, minor: 10, patch: 0 });
             expect(parseVersion('0.10.0-1')).toEqual({ major: 0, minor: 10, patch: 0 });
+        });
+
+        it.each(['0.2.20+fourfixes.20261121', '0.2.20-dev.41+build.9', '0.2.20-preview.2+build-9'])('extracts the base version from %s', (version) => {
+            expect(parseVersion(version)).toEqual({ major: 0, minor: 2, patch: 20 });
         });
 
         it('should return null for invalid versions', () => {
